@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+    <key>CFBundleDisplayName</key><string>智能睡眠闹钟</string>
+    <key>CFBundleExecutable</key><string>SmartSleepAlarm</string>
+    <key>CFBundleIdentifier</key><string>com.momomac.SmartSleepAlarm.Validation</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>SmartSleepAlarm</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.13</string>
+    <key>CFBundleVersion</key><string>20</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>com.momomac.smartsleepalarm</string>
+        <key>CFBundleURLSchemes</key><array><string>smartsleepalarm</string></array>
+    </dict></array>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>NSHealthShareUsageDescription</key><string>用于读取睡眠分析数据，以评估配置的唤醒窗口。</string>
+    <key>NSHealthUpdateUsageDescription</key><string>本应用不会写入健康数据。</string>
+    <key>NSHumanReadableCopyright</key><string>本地技术验证版本</string>
+</dict></plist>

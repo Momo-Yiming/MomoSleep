@@ -1,0 +1,13 @@
+.build/
+DerivedData/
+dist/
+*.xcuserstate
+xcuserdata/
+.runtime/
+.DS_Store
+output/
+server/node_modules/
+**/.wrangler/
+server/.dev.vars*
+server/.env*
+server/pages/assets/team/*-cutout-v2.png

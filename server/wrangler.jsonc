@@ -1,0 +1,28 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "smart-sleep-economy-demo",
+	"main": "src/index.mjs",
+	"compatibility_date": "2026-09-04",
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"MONAD_RPC_URL": "https://testnet-rpc.monad.xyz",
+		"MONAD_CHAIN_ID": "10143",
+		"MONAD_EXPLORER_URL": "https://testnet.monadscan.com",
+		"CONTRACT_ADDRESS": "0x5dea033080d3f3420a3ee68b2e355a79135cbd84",
+		"SLEEP_TOKEN_ADDRESS": "0xe6ab81d7e4f7028b7aa9bbda23c6001acb70495e",
+		"SLEEP_TOKEN_DEPLOYMENT_TX": "0x511faa3c1897514118715adba3c8dadaba75927cdb04bcde1ba0617b1695c07e",
+		"SLEEP_TOKEN_MAX_MINTS": "20",
+		"CASH_RATE_FEN_PER_100_POINTS": "100",
+		"CASH_QUOTE_VERSION": "pilot-2026-09-05-a"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "smart-sleep-economy-demo",
+			"database_id": "0451ca33-d847-4974-8240-9a238de67ecf",
+			"migrations_dir": "migrations"
+		}
+	]
+}

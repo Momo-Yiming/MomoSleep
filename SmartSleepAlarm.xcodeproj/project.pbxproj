@@ -1,0 +1,360 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* SmartSleepAlarmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SmartSleepAlarmApp.swift */; };
+		A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
+		A10000000000000000000003 /* SleepModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* SleepModels.swift */; };
+		A10000000000000000000004 /* HealthKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* HealthKitService.swift */; };
+		A10000000000000000000005 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* NotificationService.swift */; };
+		A10000000000000000000006 /* SleepViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* SleepViewModel.swift */; };
+		A10000000000000000000007 /* SleepEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* SleepEvaluatorTests.swift */; };
+		A10000000000000000000009 /* VerificationLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* VerificationLog.swift */; };
+		A1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* Assets.xcassets */; };
+		A1000000000000000000000B /* SleepEconomy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* SleepEconomy.swift */; };
+		A1000000000000000000000C /* EconomyDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* EconomyDemo.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = SmartSleepAlarm;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* SmartSleepAlarmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartSleepAlarmApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* SleepModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* HealthKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitService.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* SleepViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepViewModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* SleepEvaluatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepEvaluatorTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* SmartSleepAlarm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SmartSleepAlarm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000009 /* SmartSleepAlarmTests.xctest */ = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; path = SmartSleepAlarmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000011 /* SmartSleepAlarm.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SmartSleepAlarm.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000012 /* VerificationLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationLog.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000014 /* SleepEconomy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepEconomy.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* EconomyDemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EconomyDemo.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A60000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A60000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A70000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A70000000000000000000002 /* SmartSleepAlarm */,
+				A70000000000000000000003 /* SmartSleepAlarmTests */,
+				A70000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A70000000000000000000002 /* SmartSleepAlarm */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* SmartSleepAlarmApp.swift */,
+				A20000000000000000000002 /* ContentView.swift */,
+				A20000000000000000000003 /* SleepModels.swift */,
+				A20000000000000000000004 /* HealthKitService.swift */,
+				A20000000000000000000005 /* NotificationService.swift */,
+				A20000000000000000000006 /* SleepViewModel.swift */,
+				A20000000000000000000012 /* VerificationLog.swift */,
+				A20000000000000000000014 /* SleepEconomy.swift */,
+				A20000000000000000000015 /* EconomyDemo.swift */,
+				A20000000000000000000013 /* Assets.xcassets */,
+				A20000000000000000000010 /* Info.plist */,
+				A20000000000000000000011 /* SmartSleepAlarm.entitlements */,
+			);
+			path = SmartSleepAlarm;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000003 /* SmartSleepAlarmTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* SleepEvaluatorTests.swift */,
+			);
+			path = SmartSleepAlarmTests;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000008 /* SmartSleepAlarm.app */,
+				A20000000000000000000009 /* SmartSleepAlarmTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* SmartSleepAlarm */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000000000000000000001 /* Build configuration list for PBXNativeTarget "SmartSleepAlarm" */;
+			buildPhases = (
+				A60000000000000000000001 /* Frameworks */,
+				AA00000000000000000000001 /* Sources */,
+				AB00000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SmartSleepAlarm;
+			productName = SmartSleepAlarm;
+			productReference = A20000000000000000000008 /* SmartSleepAlarm.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* SmartSleepAlarmTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000000000000000000002 /* Build configuration list for PBXNativeTarget "SmartSleepAlarmTests" */;
+			buildPhases = (
+				A60000000000000000000002 /* Frameworks */,
+				AA00000000000000000000002 /* Sources */,
+				AB00000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AC00000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = SmartSleepAlarmTests;
+			productName = SmartSleepAlarmTests;
+			productReference = A20000000000000000000009 /* SmartSleepAlarmTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A40000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A50000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A50000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A90000000000000000000003 /* Build configuration list for PBXProject "SmartSleepAlarm" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A70000000000000000000001;
+			productRefGroup = A70000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000000000000000000001 /* SmartSleepAlarm */,
+				A50000000000000000000002 /* SmartSleepAlarmTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AB00000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB00000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA00000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* SmartSleepAlarmApp.swift in Sources */,
+				A10000000000000000000002 /* ContentView.swift in Sources */,
+				A10000000000000000000003 /* SleepModels.swift in Sources */,
+				A10000000000000000000004 /* HealthKitService.swift in Sources */,
+				A10000000000000000000005 /* NotificationService.swift in Sources */,
+				A10000000000000000000006 /* SleepViewModel.swift in Sources */,
+				A10000000000000000000009 /* VerificationLog.swift in Sources */,
+				A1000000000000000000000B /* SleepEconomy.swift in Sources */,
+				A1000000000000000000000C /* EconomyDemo.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000007 /* SleepEvaluatorTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AC00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* SmartSleepAlarm */;
+			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AD00000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+			};
+			name = Debug;
+		};
+		AD00000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+			};
+			name = Release;
+		};
+		AD00000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SmartSleepAlarm/SmartSleepAlarm.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 22;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SmartSleepAlarm/Info.plist;
+				MARKETING_VERSION = 0.15;
+				PRODUCT_BUNDLE_IDENTIFIER = com.momomac.smartsleepalarm;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD00000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SmartSleepAlarm/SmartSleepAlarm.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 22;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SmartSleepAlarm/Info.plist;
+				MARKETING_VERSION = 0.15;
+				PRODUCT_BUNDLE_IDENTIFIER = com.momomac.smartsleepalarm;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AD00000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.momomac.smartsleepalarm.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmartSleepAlarm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SmartSleepAlarm";
+			};
+			name = Debug;
+		};
+		AD00000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.momomac.smartsleepalarm.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmartSleepAlarm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SmartSleepAlarm";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A90000000000000000000001 /* Build configuration list for PBXNativeTarget "SmartSleepAlarm" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00000000000000000000003 /* Debug */,
+				AD00000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A90000000000000000000002 /* Build configuration list for PBXNativeTarget "SmartSleepAlarmTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00000000000000000000005 /* Debug */,
+				AD00000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A90000000000000000000003 /* Build configuration list for PBXProject "SmartSleepAlarm" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00000000000000000000001 /* Debug */,
+				AD00000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A40000000000000000000001 /* Project object */;
+}
