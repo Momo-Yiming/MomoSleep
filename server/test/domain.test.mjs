@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { merkleRoot, quoteCashRedemption, scoreSleep, sha256Hex, simulatedChainReceipt } from "../src/domain.mjs";
 import server from "../src/index.mjs";
 
@@ -128,7 +129,7 @@ test("serves the original screenshot with four accessible interactive stage targ
   assert.match(html, /id="team"/);
   assert.match(html, /team-portrait-hero-v2\.png/);
   assert.match(html, /team-portrait-frank-cutout-v3\.png/);
-  assert.match(html, /team-portrait-momo-cutout-v3\.png/);
+  assert.match(html, /team-portrait-momo-cutout-v5\.png/);
   assert.match(html, /team-portrait-anne-cutout-v3\.png/);
   assert.equal(html.match(/class="team-member /g)?.length, 3);
   assert.equal(html.match(/<h1[ >]/g)?.length, 1);
@@ -143,10 +144,9 @@ test("serves the original screenshot with four accessible interactive stage targ
   assert.match(html, /认知科学与社会学研究/);
   assert.match(html, /广东外语外贸大学 · 金融专业背景/);
   assert.match(html, /AI 自媒体博主/);
-  assert.match(html, /tags:\['ENTJ','丁火男'\]/);
-  assert.match(html, /tags:\['INFP','丙火女'\]/);
-  assert.doesNotMatch(html, /tags:\['ENTP','丁火男'\]/);
-  assert.doesNotMatch(html, /tags:\['INTJ','丙火女'\]/);
+  const team = runInNewContext(`(${html.match(/const teamPeople=(.*);\nconst teamStage/)[1]})`, { t: zh => zh });
+  assert.equal(team.frank.tags.join(","), "ENTJ,丁火男");
+  assert.equal(team.anne.tags.join(","), "INFP,丙火女");
   assert.match(html, /sleep-stage-sample-a\.jpg/);
   assert.equal(html.match(/class="stage-hotspot /g)?.length, 4);
   assert.match(html, /mouseenter/);
