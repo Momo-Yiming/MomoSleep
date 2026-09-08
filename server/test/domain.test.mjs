@@ -130,6 +130,7 @@ test("serves the original screenshot with four accessible interactive stage targ
   assert.match(html, /team-portrait-hero-v2\.png/);
   assert.match(html, /team-portrait-frank-cutout-v3\.png/);
   assert.match(html, /team-portrait-momo-cutout-v5\.png/);
+  assert.match(html, /class="team-portrait-momo-default" src="\/assets\/team\/team-portrait-momo-cutout-v5\.png"/);
   assert.match(html, /team-portrait-anne-cutout-v3\.png/);
   assert.equal(html.match(/class="team-member /g)?.length, 3);
   assert.equal(html.match(/<h1[ >]/g)?.length, 1);
