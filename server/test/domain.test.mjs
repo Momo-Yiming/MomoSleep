@@ -196,13 +196,25 @@ test("serves the original screenshot with four accessible interactive stage targ
   assert.doesNotMatch(html, /基础分 0；1 − 6×2%/);
   assert.doesNotMatch(html, /class="stage-strip"/);
 
-  const previewResponse = await server.fetch(new Request("https://example.test/team-preview"), {});
-  const previewHtml = await previewResponse.text();
-  assert.equal(previewResponse.status, 200);
-  assert.match(previewHtml, /北京大学 · 集成电路专业/);
-  assert.match(previewHtml, /认知科学与社会学研究/);
-  assert.match(previewHtml, /tags:\['ENTJ','丁火男'\]/);
-  assert.match(previewHtml, /tags:\['INFP','丙火女'\]/);
-  assert.doesNotMatch(previewHtml, /tags:\['ENTP','丁火男'\]/);
-  assert.doesNotMatch(previewHtml, /tags:\['INTJ','丙火女'\]/);
+});
+
+test("uses a continuous restored backdrop and a single layer per team member", async () => {
+  const response = await server.fetch(new Request("https://example.test/"), {});
+  const html = await response.text();
+  const stage = html.match(/<div class="team-stage"[\s\S]*?<\/div>/)[0];
+  assert.match(stage, /data-active="momo"/);
+  assert.match(stage, /team-backdrop-restored-v1\.png/);
+  assert.match(stage, /mask="url\(#team-original-background\)"/);
+  assert.equal(stage.match(/<img /g)?.length, 3);
+  assert.doesNotMatch(stage, /class="team-glow/);
+  const momoImage = stage.match(/<img class="team-portrait-momo-default"[^>]*>/)[0];
+  assert.match(momoImage, /team-portrait-momo-cutout-v5\.png/);
+});
+
+test("redirects the old team preview to the current section, preserving language", async () => {
+  for (const query of ["", "?lang=en"]) {
+    const response = await server.fetch(new Request(`https://example.test/team-preview${query}`), {});
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), `/${query}#team`);
+  }
 });
