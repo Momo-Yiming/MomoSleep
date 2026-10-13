@@ -38,6 +38,10 @@ RingConn Gen 2 → RingConn App → Apple Health
 
 原始健康记录保持链下；来源元数据与区块链回执不能证明真实睡眠。已实现的原生读取链路与公网页演示应分别验收，公网页没有读取或上传访问者的 HealthKit 数据。
 
+## Web App 1.1
+
+Web App 1.1 加入显式刷新、随机虚构人物与夜晚、服务端计分及多晚记录；兑换中心包含商品、人民币试点申请与虚拟 SLEEP 兑换。随机数据不具备真实上链资格，人民币未接通打款，虚拟代币没有经济价值。该版本为浏览器 App 更新，原生 iOS App 单独验收。
+
 ## 目录
 
 - `SmartSleepAlarm/`、`SmartSleepAlarm.xcodeproj/`：iOS/macOS 客户端、HealthKit、AlarmKit、积分与凭证逻辑。
@@ -71,7 +75,7 @@ pnpm db:local
 pnpm exec wrangler dev
 ```
 
-部署到自己的 Cloudflare 账户前，创建 D1 并替换两份 Wrangler 配置中的全零 `database_id`。按顺序应用 `0001`–`0007` 迁移；Worker 与 Pages 应绑定同一个数据库。Cloudflare 密钥、管理员密钥、监控密码和 Monad 测试钱包私钥通过 Secrets/环境变量提供。运行与恢复说明见 [服务器 README](server/README.md)。
+部署到自己的 Cloudflare 账户前，创建 D1 并替换两份 Wrangler 配置中的全零 `database_id`。按顺序应用 `0001`–`0008` 迁移；Worker 与 Pages 应绑定同一个数据库。Cloudflare 密钥、管理员密钥、监控密码和 Monad 测试钱包私钥通过 Secrets/环境变量提供。运行与恢复说明见 [服务器 README](server/README.md)。
 
 ### 合约
 

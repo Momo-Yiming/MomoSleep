@@ -62,6 +62,17 @@
 
 兑换的 `requestId` 在请求发出前保存。相同账户、商品和编号的重试返回原订单并只扣分一次；不确定时先读取订单，再恢复原请求。订单、余额和账本写入保持事务一致；旧客户端不传编号仍可使用。个人目标仅存当前浏览器，不改变样例得分。
 
+## Web App 1.1：多晚模拟与兑换中心（2026-10-14）
+
+- 顶部增加带文字的刷新按钮和上次刷新时间；桌面双栏、手机单栏，保留今日、睡眠、权益、我的四页及中英文。
+- “随机人物与夜晚”使用 UUID 生成确定性的虚构人物、日期、阶段分钟与作息。`GET /api/demo/state?accountId=…&simulationId=…` 返回 `simulationSleep`，原 `sampleSleep` A 保持兼容；刷新与跨语言恢复同一晚。
+- `POST /api/demo/claims {profile:"simulation",simulationId}` 在服务端重新计分，忽略客户端奖励覆盖。每账户、每模拟记录只领取一次；随机 claim 为 `simulated`，不能用于真实 mint 或管理员 anchor。`currentClaim` 精确返回当前夜晚，`stats` 使用全量账本聚合，避免最近列表截断影响累计值。
+- 商品仍使用原请求编号恢复机制；人民币仍只保存 `integration_pending` 报价申请，不扣分、不打款。新增 `POST /api/demo/cash-redemptions/cancel {requestId}` 仅取消本账户待接入申请。
+- 新增 `POST /api/demo/token-exchanges {points,requestId}`：1 沙盒积分兑换 1 虚拟 SLEEP，事务内扣分、保存兑换和积分流水。同编号重试不会重复扣款；响应未知时冻结原金额和编号。虚拟余额不属于链上资产、不与现有测试网铸币余额混用。
+- 部署前应用 `0008_app_simulations.sql`，仅新增虚拟代币兑换表。实际 Monad Testnet 铸币仍基于授权样例 A 的凭证，不扣这里的积分余额，原恢复与额度限制保持。
+
+验证：72 项自动测试通过；本地浏览器实测不同人物/夜晚、领取与刷新恢复、商品扣分、人民币申请/取消、虚拟代币扣分入账、语言切换，以及 390px 手机布局无横向溢出。该验收针对 Web App 和沙盒，不等于原生 iOS App、健康设备接入、配送或真实支付验收。
+
 ## 本地运行
 
 ```sh
@@ -76,7 +87,7 @@ pnpm dev -- --local
 
 ## Cloudflare 部署
 
-两份 Wrangler 配置使用全零 `database_id` 占位。先创建自己的数据库，再填写返回的 ID。按顺序应用 `0001`–`0007`；Worker 与 Pages 绑定同一 D1，并分别配置所需 secrets。`0007` 会保守隔离历史不明铸币结果，不能通过删除记录绕过防重复。
+两份 Wrangler 配置使用全零 `database_id` 占位。先创建自己的数据库，再填写返回的 ID。按顺序应用 `0001`–`0008`；Worker 与 Pages 绑定同一 D1，并分别配置所需 secrets。`0007` 会保守隔离历史不明铸币结果，不能通过删除记录绕过防重复。
 
 ```sh
 cd server

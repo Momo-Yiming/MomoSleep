@@ -12,10 +12,11 @@ import { merkleRoot, quoteCashRedemption, sha256Hex, simulatedChainReceipt } fro
 import { localizePage, requestLanguage } from "./i18n.mjs";
 import { appIcon, appManifest, appPage } from "./app-page.mjs";
 import { disclosedSleepSample } from "./sleep-sample.mjs";
+import { canonicalSimulationId, sleepSimulation } from "./sleep-simulation.mjs";
 import { MintHTTPError, prepareSubmission, recoverSubmissions, settleSubmission, submissionFor } from "./chain-submission.mjs";
 import { processMint, reconcileMint, reconcileMints, reserveMint } from "./token-mint.mjs";
 
-const BUILD_ID = "1.4-user-app";
+const BUILD_ID = "1.5-app-simulations";
 
 class HTTPError extends Error {
   constructor(status, message) {
@@ -135,6 +136,22 @@ function tokenPolicy(env) {
   };
 }
 
+const tokenExchangePolicy = {
+  mode: "sandbox",
+  tokenSymbol: "SLEEP",
+  pointsPerToken: 1,
+  minimumPoints: 1,
+  maximumPoints: 10_000,
+  onchain: false,
+  disclaimer: "仅为虚拟 SLEEP 沙盒兑换，不上链、无现金或代币市场价值。",
+};
+
+function simulationSelection(value) {
+  if (value == null) return null;
+  try { return canonicalSimulationId(value); }
+  catch { throw new HTTPError(400, "simulationId must be a UUID"); }
+}
+
 async function ensureAccount(env, accountId) {
   if (!validAccountId(accountId)) throw new HTTPError(400, "invalid accountId");
   await env.DB.prepare(
@@ -142,9 +159,10 @@ async function ensureAccount(env, accountId) {
   ).bind(accountId, new Date().toISOString()).run();
 }
 
-async function demoState(env, accountId) {
+async function demoState(env, accountId, requestedSimulationId = null) {
+  const simulationId = simulationSelection(requestedSimulationId);
   await ensureAccount(env, accountId);
-  const [account, claims, products, orders, entries, cashRedemptions, tokenMints, publicTokenMints, batches] = await Promise.all([
+  const [account, claims, products, orders, entries, cashRedemptions, tokenMints, publicTokenMints, batches, tokenExchanges, stats, selectedSimulationClaim] = await Promise.all([
     env.DB.prepare("SELECT id, display_name AS displayName, points, created_at AS createdAt FROM accounts WHERE id = ?").bind(accountId).first(),
     env.DB.prepare("SELECT id, night_key AS nightKey, commitment, raw_points AS rawPoints, awarded_points AS awardedPoints, scoring_version AS scoringVersion, score_breakdown_json AS scoreBreakdownJSON, trust_grade AS trustGrade, status, batch_id AS batchId, created_at AS createdAt FROM claims WHERE account_id = ? ORDER BY created_at DESC LIMIT 20").bind(accountId).all(),
     env.DB.prepare("SELECT id, title, price_points AS pricePoints, stock FROM products ORDER BY price_points").all(),
@@ -154,8 +172,11 @@ async function demoState(env, accountId) {
     env.DB.prepare("SELECT id, claim_id AS claimId, claim_commitment AS claimCommitment, recipient, points, token_amount_wei AS tokenAmountWei, status, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, created_at AS createdAt, confirmed_at AS confirmedAt, updated_at AS updatedAt, error_message AS errorMessage FROM token_mints WHERE account_id = ? ORDER BY created_at DESC LIMIT 20").bind(accountId).all(),
     env.DB.prepare("SELECT id, claim_commitment AS claimCommitment, recipient, points, token_amount_wei AS tokenAmountWei, status, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, confirmed_at AS confirmedAt FROM token_mints WHERE status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 10").all(),
     env.DB.prepare("SELECT id, merkle_root AS merkleRoot, claim_count AS claimCount, scoring_version AS scoringVersion, chain_status AS chainStatus, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, created_at AS createdAt, anchored_at AS anchoredAt FROM anchor_batches ORDER BY created_at DESC LIMIT 10").all(),
+    env.DB.prepare("SELECT id, points, token_amount AS tokenAmount, 'SLEEP' AS tokenSymbol, status, created_at AS createdAt FROM sandbox_token_exchanges WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT 20").bind(accountId).all(),
+    env.DB.prepare("SELECT (SELECT COALESCE(SUM(points), 0) FROM point_entries WHERE account_id = ? AND points > 0) AS earnedPoints, (SELECT COALESCE(SUM(-points), 0) FROM point_entries WHERE account_id = ? AND points < 0) AS spentPoints, (SELECT COUNT(*) FROM claims WHERE account_id = ?) AS claimedNights, (SELECT COUNT(*) FROM orders WHERE account_id = ?) AS orderCount, (SELECT COALESCE(SUM(token_amount), 0) FROM sandbox_token_exchanges WHERE account_id = ?) AS virtualTokenBalance").bind(accountId, accountId, accountId, accountId, accountId).first(),
+    env.DB.prepare("SELECT id, night_key AS nightKey, commitment, raw_points AS rawPoints, awarded_points AS awardedPoints, scoring_version AS scoringVersion, score_breakdown_json AS scoreBreakdownJSON, trust_grade AS trustGrade, status, batch_id AS batchId, created_at AS createdAt FROM claims WHERE account_id = ? AND night_key = ?").bind(accountId, simulationId ? `simulation-${simulationId}` : "disclosed-example-a").first(),
   ]);
-  const claimReceipts = await Promise.all(claims.results.map(async (claim) => {
+  const withClaimReceipt = async (claim) => {
     const { scoreBreakdownJSON, ...publicClaim } = claim;
     return {
       ...publicClaim,
@@ -164,10 +185,12 @@ async function demoState(env, accountId) {
         recordId: claim.id,
         commitment: claim.commitment,
         createdAt: claim.createdAt,
-        sequence: Number(claim.nightKey.match(/(\d+)$/)?.[1] ?? 1),
+        sequence: Math.max(1, Number(claim.nightKey.match(/(\d+)$/)?.[1] ?? 1)),
       }),
     };
-  }));
+  };
+  const claimReceipts = await Promise.all(claims.results.map(withClaimReceipt));
+  const currentClaim = selectedSimulationClaim ? await withClaimReceipt(selectedSimulationClaim) : null;
   const orderReceipts = await Promise.all(orders.results.map(async (order) => {
     const commitment = await sha256Hex(JSON.stringify({
       id: order.id,
@@ -194,12 +217,18 @@ async function demoState(env, accountId) {
     mode: "sandbox",
     account,
     sampleSleep: disclosedSleepSample().summary,
+    simulationSleep: simulationId ? sleepSimulation(simulationId).summary : null,
+    currentClaim,
+    currentSimulationClaim: simulationId ? currentClaim : null,
+    stats,
     claims: claimReceipts,
     products: products.results,
     orders: orderReceipts,
     entries: entries.results,
     cashPolicy: cashPolicy(env),
     cashRedemptions: cashRedemptions.results,
+    tokenExchangePolicy,
+    tokenExchanges: tokenExchanges.results,
     tokenPolicy: tokenPolicy(env),
     tokenMints: tokenMints.results.map(mint => ({ ...mint, retryable: ["failed", "reverted"].includes(mint.status) })),
     publicTokenMints: publicTokenMints.results,
@@ -215,9 +244,12 @@ async function demoState(env, accountId) {
 
 async function createDemoClaim(env, payload) {
   const accountId = payload.accountId;
+  const simulationId = simulationSelection(payload.simulationId);
+  if (payload.profile !== "screenshot" && payload.profile !== "simulation") throw new HTTPError(409, "沙盒计分已升级，请更新 App 后使用四维样例 A");
+  if (payload.profile === "simulation" && !simulationId) throw new HTTPError(400, "simulationId must be a UUID");
   await ensureAccount(env, accountId);
-  if (payload.profile !== "screenshot") throw new HTTPError(409, "沙盒计分已升级，请更新 App 后使用四维样例 A");
-  const { input: minutes, score, nightKey, scoreBreakdown, fingerprintData } = disclosedSleepSample();
+  const synthetic = payload.profile === "simulation";
+  const { input: minutes, score, nightKey, scoreBreakdown, fingerprintData } = synthetic ? sleepSimulation(simulationId) : disclosedSleepSample();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const { format, ...fingerprint } = fingerprintData;
@@ -228,19 +260,20 @@ async function createDemoClaim(env, payload) {
     ...fingerprint,
   }));
   const results = await env.DB.batch([
-    env.DB.prepare("INSERT OR IGNORE INTO claims (id, account_id, night_key, commitment, asleep_minutes, core_minutes, rem_minutes, deep_minutes, raw_points, awarded_points, scoring_version, score_breakdown_json, trust_grade, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SANDBOX', 'accepted', ?)")
-      .bind(id, accountId, nightKey, commitment, minutes.asleepMinutes, minutes.coreMinutes, minutes.remMinutes, minutes.deepMinutes, score.rawPoints, score.awardedPoints, score.scoringVersion, JSON.stringify(scoreBreakdown), now),
+    env.DB.prepare("INSERT OR IGNORE INTO claims (id, account_id, night_key, commitment, asleep_minutes, core_minutes, rem_minutes, deep_minutes, raw_points, awarded_points, scoring_version, score_breakdown_json, trust_grade, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SANDBOX', ?, ?)")
+      .bind(id, accountId, nightKey, commitment, minutes.asleepMinutes, minutes.coreMinutes, minutes.remMinutes, minutes.deepMinutes, score.rawPoints, score.awardedPoints, score.scoringVersion, JSON.stringify(scoreBreakdown), synthetic ? "simulated" : "accepted", now),
     env.DB.prepare("UPDATE accounts SET points = points + ? WHERE id = ? AND EXISTS (SELECT 1 FROM claims WHERE id = ?)")
       .bind(score.awardedPoints, accountId, id),
     env.DB.prepare("INSERT INTO point_entries (id, account_id, points, kind, reference_id, note, created_at) SELECT ?, ?, ?, 'sleep_reward', ?, ?, ? WHERE EXISTS (SELECT 1 FROM claims WHERE id = ?)")
       .bind(crypto.randomUUID(), accountId, score.awardedPoints, id, `${nightKey} 沙盒睡眠奖励`, now, id),
   ]);
   if (Number(results[0].meta?.changes ?? 0) !== 1) throw new HTTPError(409, "这个模拟夜晚已经领取过积分");
-  return demoState(env, accountId);
+  return demoState(env, accountId, simulationId);
 }
 
 async function createDemoOrder(env, payload) {
   const { accountId, productId, requestId } = payload;
+  const simulationId = simulationSelection(payload.simulationId);
   await ensureAccount(env, accountId);
   if (typeof productId !== "string") throw new HTTPError(400, "invalid productId");
   if (requestId !== undefined && !validAccountId(requestId)) throw new HTTPError(400, "invalid requestId");
@@ -248,7 +281,7 @@ async function createDemoOrder(env, payload) {
   const existing = await env.DB.prepare("SELECT account_id AS accountId, product_id AS productId FROM orders WHERE id = ?").bind(id).first();
   if (existing) {
     if (existing.accountId !== accountId || existing.productId !== productId) throw new HTTPError(409, "兑换请求编号已被使用");
-    return demoState(env, accountId);
+    return demoState(env, accountId, simulationId);
   }
   const product = await env.DB.prepare("SELECT id, title, price_points AS pricePoints FROM products WHERE id = ? AND stock > 0").bind(productId).first();
   if (!product) throw new HTTPError(404, "商品不存在或已售罄");
@@ -269,11 +302,12 @@ async function createDemoOrder(env, payload) {
     throw new HTTPError(409, entry ? "兑换请求编号已被使用" : "沙盒积分不足");
   }
   if (order.accountId !== accountId || order.productId !== productId) throw new HTTPError(409, "兑换请求编号已被使用");
-  return demoState(env, accountId);
+  return demoState(env, accountId, simulationId);
 }
 
 async function createCashRedemptionApplication(env, payload) {
   const { accountId } = payload;
+  const simulationId = simulationSelection(payload.simulationId);
   const points = Number(payload.points);
   await ensureAccount(env, accountId);
   const policy = cashPolicy(env);
@@ -291,7 +325,46 @@ async function createCashRedemptionApplication(env, payload) {
   if (Number(result.meta?.changes ?? 0) !== 1) throw new HTTPError(409, "已有一笔待接入兑付申请，请先完成或取消");
   // Current public accounts are anonymous sandbox accounts. Do not reserve points or call a payment API
   // until the sponsor budget, legal entity, KYC consent and merchant-transfer channel are active.
-  return demoState(env, accountId);
+  return demoState(env, accountId, simulationId);
+}
+
+async function cancelCashRedemptionApplication(env, payload) {
+  const { accountId, requestId } = payload;
+  const simulationId = simulationSelection(payload.simulationId);
+  if (!validAccountId(requestId)) throw new HTTPError(400, "invalid requestId");
+  await ensureAccount(env, accountId);
+  const record = await env.DB.prepare("SELECT status FROM cash_redemptions WHERE id = ? AND account_id = ?").bind(requestId, accountId).first();
+  if (!record) throw new HTTPError(404, "未找到本账户的兑付申请");
+  if (record.status !== "integration_pending" && record.status !== "cancelled") throw new HTTPError(409, "此兑付申请不能取消");
+  await env.DB.prepare("UPDATE cash_redemptions SET status = 'cancelled' WHERE id = ? AND account_id = ? AND status = 'integration_pending'").bind(requestId, accountId).run();
+  return demoState(env, accountId, simulationId);
+}
+
+async function createSandboxTokenExchange(env, payload) {
+  const { accountId, points } = payload;
+  const simulationId = simulationSelection(payload.simulationId);
+  if (!Number.isInteger(points) || points < tokenExchangePolicy.minimumPoints || points > tokenExchangePolicy.maximumPoints) throw new HTTPError(400, "兑换积分必须为 1–10000 的整数");
+  let requestId;
+  try { requestId = canonicalSimulationId(payload.requestId); } catch { throw new HTTPError(400, "requestId must be a UUID"); }
+  await ensureAccount(env, accountId);
+  const existing = await env.DB.prepare("SELECT account_id AS accountId, points FROM sandbox_token_exchanges WHERE id = ?").bind(requestId).first();
+  if (existing) {
+    if (existing.accountId !== accountId || existing.points !== points) throw new HTTPError(409, "兑换请求编号已被使用");
+    return demoState(env, accountId, simulationId);
+  }
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO sandbox_token_exchanges (id, account_id, points, token_amount, status, created_at) SELECT ?, ?, ?, ?, 'sandbox_completed', ? FROM accounts WHERE id = ? AND points >= ? AND NOT EXISTS (SELECT 1 FROM point_entries WHERE reference_id = ?)").bind(requestId, accountId, points, points, now, accountId, points, requestId),
+    env.DB.prepare("UPDATE accounts SET points = points - ? WHERE id = ? AND EXISTS (SELECT 1 FROM sandbox_token_exchanges WHERE id = ? AND account_id = ? AND points = ?) AND NOT EXISTS (SELECT 1 FROM point_entries WHERE reference_id = ?)").bind(points, accountId, requestId, accountId, points, requestId),
+    env.DB.prepare("INSERT OR IGNORE INTO point_entries (id, account_id, points, kind, reference_id, note, created_at) SELECT ?, ?, ?, 'virtual_token_exchange', ?, '虚拟 SLEEP 沙盒兑换（不上链）', ? WHERE EXISTS (SELECT 1 FROM sandbox_token_exchanges WHERE id = ? AND account_id = ? AND points = ?)").bind(`token-${requestId}`, accountId, -points, requestId, now, requestId, accountId, points),
+  ]);
+  const result = await env.DB.prepare("SELECT account_id AS accountId, points FROM sandbox_token_exchanges WHERE id = ?").bind(requestId).first();
+  if (!result) {
+    const collision = await env.DB.prepare("SELECT id FROM point_entries WHERE reference_id = ?").bind(requestId).first();
+    throw new HTTPError(409, collision ? "兑换请求编号已被使用" : "沙盒积分不足");
+  }
+  if (result.accountId !== accountId || result.points !== points) throw new HTTPError(409, "兑换请求编号已被使用");
+  return demoState(env, accountId, simulationId);
 }
 
 function monadClients(env) {
@@ -314,6 +387,7 @@ function monadClients(env) {
 
 async function createTokenMint(env, payload) {
   const { accountId } = payload;
+  if (payload.simulationId != null) throw new HTTPError(409, "随机模拟记录不支持真实测试网铸币，请使用虚拟 SLEEP 沙盒兑换。");
   await ensureAccount(env, accountId);
   if (!isAddress(payload.recipient ?? "")) throw new HTTPError(400, "请输入有效的 EVM 钱包地址");
   const recipient = getAddress(payload.recipient);
@@ -321,7 +395,7 @@ async function createTokenMint(env, payload) {
   const policy = tokenPolicy(env);
   if (!policy.mintingEnabled || !policy.contractAddress) throw new HTTPError(503, "测试网铸币暂未开放");
   const claim = await env.DB.prepare(
-    "SELECT id, commitment, awarded_points AS awardedPoints FROM claims WHERE account_id = ? AND status = 'accepted' AND awarded_points BETWEEN 1 AND ? ORDER BY created_at DESC LIMIT 1",
+    "SELECT id, commitment, awarded_points AS awardedPoints FROM claims WHERE account_id = ? AND status = 'accepted' AND night_key = 'disclosed-example-a' AND trust_grade = 'SANDBOX' AND awarded_points BETWEEN 1 AND ? ORDER BY created_at DESC LIMIT 1",
   ).bind(accountId, policy.maxPointsPerMint).first();
   if (!claim) throw new HTTPError(409, "请先计算并领取样例 A 的睡眠积分");
 
@@ -341,6 +415,7 @@ async function resetDemo(env, accountId) {
     env.DB.prepare("DELETE FROM point_entries WHERE account_id = ?").bind(accountId),
     env.DB.prepare("DELETE FROM cash_redemptions WHERE account_id = ?").bind(accountId),
     env.DB.prepare("DELETE FROM orders WHERE account_id = ?").bind(accountId),
+    env.DB.prepare("DELETE FROM sandbox_token_exchanges WHERE account_id = ?").bind(accountId),
     env.DB.prepare("DELETE FROM claims WHERE account_id = ? AND batch_id IS NULL AND NOT EXISTS (SELECT 1 FROM token_mints WHERE token_mints.claim_id = claims.id)").bind(accountId),
     env.DB.prepare("UPDATE accounts SET points = 0 WHERE id = ?").bind(accountId),
   ]);
@@ -360,9 +435,9 @@ function requireAdmin(request, env) {
 }
 
 async function prepareBatch(env) {
-  const next = await env.DB.prepare("SELECT scoring_version AS scoringVersion FROM claims WHERE status = 'accepted' AND batch_id IS NULL ORDER BY created_at LIMIT 1").first();
+  const next = await env.DB.prepare("SELECT scoring_version AS scoringVersion FROM claims WHERE status = 'accepted' AND night_key = 'disclosed-example-a' AND trust_grade = 'SANDBOX' AND batch_id IS NULL ORDER BY created_at LIMIT 1").first();
   if (!next) throw new HTTPError(409, "no unbatched claims");
-  const rows = (await env.DB.prepare("SELECT id, commitment FROM claims WHERE status = 'accepted' AND batch_id IS NULL AND scoring_version = ? ORDER BY created_at LIMIT 256").bind(next.scoringVersion).all()).results;
+  const rows = (await env.DB.prepare("SELECT id, commitment FROM claims WHERE status = 'accepted' AND night_key = 'disclosed-example-a' AND trust_grade = 'SANDBOX' AND batch_id IS NULL AND scoring_version = ? ORDER BY created_at LIMIT 256").bind(next.scoringVersion).all()).results;
   if (!rows.length) throw new HTTPError(409, "no unbatched claims");
   const root = await merkleRoot(rows.map((row) => row.commitment));
   const id = `batch-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -630,17 +705,19 @@ const application = {
         return new Response(null, { status: 302, headers: { ...htmlHeaders, Location: `/${url.search}#team` } });
       }
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, mode: "sandbox", build: BUILD_ID });
-      if (request.method === "GET" && url.pathname === "/api/demo/state") return json(await demoState(env, url.searchParams.get("accountId")));
+      if (request.method === "GET" && url.pathname === "/api/demo/state") return json(await demoState(env, url.searchParams.get("accountId"), url.searchParams.get("simulationId")));
       if (request.method === "POST" && url.pathname === "/api/demo/claims") return json(await createDemoClaim(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/orders") return json(await createDemoOrder(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/cash-redemptions") return json(await createCashRedemptionApplication(env, await bodyFrom(request)), 201);
+      if (request.method === "POST" && url.pathname === "/api/demo/cash-redemptions/cancel") return json(await cancelCashRedemptionApplication(env, await bodyFrom(request)));
+      if (request.method === "POST" && url.pathname === "/api/demo/token-exchanges") return json(await createSandboxTokenExchange(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/token-mints") return json(await createTokenMint(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/token-mints/reconcile") {
         const payload = await bodyFrom(request);
         await ensureAccount(env, payload.accountId);
         await recoverSubmissions(env, monadClients);
         await reconcileMints(env, monadClients, { accountId: payload.accountId, limit: 20, waitMs: 2_000 });
-        return json(await demoState(env, payload.accountId));
+        return json(await demoState(env, payload.accountId, payload.simulationId));
       }
       if (request.method === "POST" && url.pathname === "/api/demo/reset") {
         const payload = await bodyFrom(request);
