@@ -1,2 +1,2 @@
-// build 1.1-final-order-reset
+// build 1.4-user-app: shared Worker implementation
 export { default } from "../src/index.mjs";

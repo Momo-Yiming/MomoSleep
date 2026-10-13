@@ -1,3 +1,4 @@
+import { monitorRoute, recordRequest, runChecks } from "./monitor.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -7,10 +8,14 @@ import {
   isAddress,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { merkleRoot, quoteCashRedemption, scoreSleep, sha256Hex, simulatedChainReceipt } from "./domain.mjs";
+import { merkleRoot, quoteCashRedemption, sha256Hex, simulatedChainReceipt } from "./domain.mjs";
 import { localizePage, requestLanguage } from "./i18n.mjs";
+import { appIcon, appManifest, appPage } from "./app-page.mjs";
+import { disclosedSleepSample } from "./sleep-sample.mjs";
+import { MintHTTPError, prepareSubmission, recoverSubmissions, settleSubmission, submissionFor } from "./chain-submission.mjs";
+import { processMint, reconcileMint, reconcileMints, reserveMint } from "./token-mint.mjs";
 
-const BUILD_ID = "1.1-external-value";
+const BUILD_ID = "1.4-user-app";
 
 class HTTPError extends Error {
   constructor(status, message) {
@@ -46,36 +51,8 @@ const CONTRACT_ABI = [
   },
 ];
 
-const TOKEN_ABI = [
-  {
-    type: "function",
-    name: "mintSleepReward",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "recipient", type: "address" },
-      { name: "points", type: "uint256" },
-      { name: "claimCommitment", type: "bytes32" },
-    ],
-    outputs: [{ name: "amount", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "totalSupply",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-];
-
 const securityHeaders = {
-  "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://smart-sleep-economy-demo.pages.dev; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+  "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://smart-sleep-economy-demo.pages.dev; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -174,7 +151,7 @@ async function demoState(env, accountId) {
     env.DB.prepare("SELECT orders.id, orders.product_id AS productId, products.title, orders.price_points AS pricePoints, orders.status, orders.created_at AS createdAt, ROW_NUMBER() OVER (ORDER BY orders.created_at ASC, orders.id ASC) AS receiptSequence FROM orders JOIN products ON products.id = orders.product_id WHERE orders.account_id = ? ORDER BY orders.created_at DESC LIMIT 20").bind(accountId).all(),
     env.DB.prepare("SELECT id, points, kind, note, created_at AS createdAt FROM point_entries WHERE account_id = ? ORDER BY created_at DESC LIMIT 30").bind(accountId).all(),
     env.DB.prepare("SELECT id, points, rate_fen_per_100_points AS rateFenPer100Points, amount_fen AS amountFen, quote_version AS quoteVersion, payout_channel AS payoutChannel, status, created_at AS createdAt FROM cash_redemptions WHERE account_id = ? ORDER BY created_at DESC LIMIT 20").bind(accountId).all(),
-    env.DB.prepare("SELECT id, claim_id AS claimId, claim_commitment AS claimCommitment, recipient, points, token_amount_wei AS tokenAmountWei, status, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, created_at AS createdAt, confirmed_at AS confirmedAt FROM token_mints WHERE account_id = ? ORDER BY created_at DESC LIMIT 20").bind(accountId).all(),
+    env.DB.prepare("SELECT id, claim_id AS claimId, claim_commitment AS claimCommitment, recipient, points, token_amount_wei AS tokenAmountWei, status, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, created_at AS createdAt, confirmed_at AS confirmedAt, updated_at AS updatedAt, error_message AS errorMessage FROM token_mints WHERE account_id = ? ORDER BY created_at DESC LIMIT 20").bind(accountId).all(),
     env.DB.prepare("SELECT id, claim_commitment AS claimCommitment, recipient, points, token_amount_wei AS tokenAmountWei, status, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, confirmed_at AS confirmedAt FROM token_mints WHERE status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 10").all(),
     env.DB.prepare("SELECT id, merkle_root AS merkleRoot, claim_count AS claimCount, scoring_version AS scoringVersion, chain_status AS chainStatus, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, created_at AS createdAt, anchored_at AS anchoredAt FROM anchor_batches ORDER BY created_at DESC LIMIT 10").all(),
   ]);
@@ -216,6 +193,7 @@ async function demoState(env, accountId) {
   return {
     mode: "sandbox",
     account,
+    sampleSleep: disclosedSleepSample().summary,
     claims: claimReceipts,
     products: products.results,
     orders: orderReceipts,
@@ -223,7 +201,7 @@ async function demoState(env, accountId) {
     cashPolicy: cashPolicy(env),
     cashRedemptions: cashRedemptions.results,
     tokenPolicy: tokenPolicy(env),
-    tokenMints: tokenMints.results,
+    tokenMints: tokenMints.results.map(mint => ({ ...mint, retryable: ["failed", "reverted"].includes(mint.status) })),
     publicTokenMints: publicTokenMints.results,
     batches: batches.results,
     network: {
@@ -239,41 +217,15 @@ async function createDemoClaim(env, payload) {
   const accountId = payload.accountId;
   await ensureAccount(env, accountId);
   if (payload.profile !== "screenshot") throw new HTTPError(409, "沙盒计分已升级，请更新 App 后使用四维样例 A");
-  const profile = "screenshot";
-  const minutes = { asleepMinutes: 0, coreMinutes: 250, remMinutes: 50, deepMinutes: 105, awakeMinutes: 31, interruptionCount: 6, scheduleDeviationMinutes: 565 };
-  const score = scoreSleep(minutes);
-  const nightKey = "disclosed-example-a";
+  const { input: minutes, score, nightKey, scoreBreakdown, fingerprintData } = disclosedSleepSample();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const scoreBreakdown = {
-    ...score,
-    sourceLabel: "用户授权公开的单夜样例",
-    windowLabel: "07:36–15:13",
-    regularityBasis: "演示目标 21:00–07:00；入睡圆周偏差 636 分钟、醒来偏差 493 分钟，平均 565；不是多晚个人基线",
-    vendorReportedDeepPercent: 24.1,
-    visibleStageMinutes: 436,
-    unclassifiedWindowMinutes: 21,
-    inputNotes: ["清醒、REM、浅睡和深睡分钟来自截图汇总", "设备口径 24.1% = 105 / 436（含清醒）；计分口径 25.9% = 105 / 405（仅实际睡眠）", "6 次中断为图中可见片段估计，待原始逐分钟导出校准", "25% 是可版本化激励参数，不是医学诊断阈值"],
-  };
+  const { format, ...fingerprint } = fingerprintData;
   const commitment = await sha256Hex(JSON.stringify({
-    format: "sleep-claim-v2",
+    format,
     id,
     accountId,
-    nightKey,
-    scoringVersion: score.scoringVersion,
-    asleepMinutes: minutes.asleepMinutes,
-    coreMinutes: minutes.coreMinutes,
-    remMinutes: minutes.remMinutes,
-    deepMinutes: minutes.deepMinutes,
-    awakeMinutes: minutes.awakeMinutes,
-    interruptionCount: minutes.interruptionCount,
-    scheduleDeviationMinutes: minutes.scheduleDeviationMinutes,
-    depthClosenessBasisPoints: score.depthClosenessBasisPoints,
-    effectiveDeepWeightBasisPoints: score.effectiveDeepWeightBasisPoints,
-    stagePoints: score.stagePoints,
-    continuityFactorBasisPoints: score.continuityFactorBasisPoints,
-    regularityFactorBasisPoints: score.regularityFactorBasisPoints,
-    awardedPoints: score.awardedPoints,
+    ...fingerprint,
   }));
   const results = await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO claims (id, account_id, night_key, commitment, asleep_minutes, core_minutes, rem_minutes, deep_minutes, raw_points, awarded_points, scoring_version, score_breakdown_json, trust_grade, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SANDBOX', 'accepted', ?)")
@@ -288,24 +240,35 @@ async function createDemoClaim(env, payload) {
 }
 
 async function createDemoOrder(env, payload) {
-  const { accountId, productId } = payload;
+  const { accountId, productId, requestId } = payload;
   await ensureAccount(env, accountId);
   if (typeof productId !== "string") throw new HTTPError(400, "invalid productId");
+  if (requestId !== undefined && !validAccountId(requestId)) throw new HTTPError(400, "invalid requestId");
+  const id = requestId ?? crypto.randomUUID();
+  const existing = await env.DB.prepare("SELECT account_id AS accountId, product_id AS productId FROM orders WHERE id = ?").bind(id).first();
+  if (existing) {
+    if (existing.accountId !== accountId || existing.productId !== productId) throw new HTTPError(409, "兑换请求编号已被使用");
+    return demoState(env, accountId);
+  }
   const product = await env.DB.prepare("SELECT id, title, price_points AS pricePoints FROM products WHERE id = ? AND stock > 0").bind(productId).first();
   if (!product) throw new HTTPError(404, "商品不存在或已售罄");
-  const id = crypto.randomUUID();
-  const entryId = crypto.randomUUID();
+  const entryId = `order-${id}`;
   const now = new Date().toISOString();
   // ponytail: D1 batch is sufficient for this zero-value sandbox; use a reservation service if real inventory is introduced.
-  const results = await env.DB.batch([
-    env.DB.prepare("INSERT INTO orders (id, account_id, product_id, price_points, status, created_at) SELECT ?, ?, ?, ?, 'sandbox_completed', ? FROM accounts WHERE id = ? AND points >= ?")
-      .bind(id, accountId, product.id, product.pricePoints, now, accountId, product.pricePoints),
-    env.DB.prepare("UPDATE accounts SET points = points - ? WHERE id = ? AND EXISTS (SELECT 1 FROM orders WHERE id = ?)")
-      .bind(product.pricePoints, accountId, id),
-    env.DB.prepare("INSERT INTO point_entries (id, account_id, points, kind, reference_id, note, created_at) SELECT ?, ?, ?, 'shop_purchase', ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ?)")
-      .bind(entryId, accountId, -product.pricePoints, id, `沙盒兑换：${product.title}`, now, id),
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO orders (id, account_id, product_id, price_points, status, created_at) SELECT ?, ?, ?, ?, 'sandbox_completed', ? FROM accounts WHERE id = ? AND points >= ? AND NOT EXISTS (SELECT 1 FROM point_entries WHERE reference_id = ?)")
+      .bind(id, accountId, product.id, product.pricePoints, now, accountId, product.pricePoints, id),
+    env.DB.prepare("UPDATE accounts SET points = points - ? WHERE id = ? AND EXISTS (SELECT 1 FROM orders WHERE id = ? AND account_id = ? AND product_id = ?) AND NOT EXISTS (SELECT 1 FROM point_entries WHERE reference_id = ?)")
+      .bind(product.pricePoints, accountId, id, accountId, productId, id),
+    env.DB.prepare("INSERT OR IGNORE INTO point_entries (id, account_id, points, kind, reference_id, note, created_at) SELECT ?, ?, ?, 'shop_purchase', ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ? AND account_id = ? AND product_id = ?)")
+      .bind(entryId, accountId, -product.pricePoints, id, `沙盒兑换：${product.title}`, now, id, accountId, productId),
   ]);
-  if (Number(results[0].meta?.changes ?? 0) !== 1) throw new HTTPError(409, "沙盒积分不足");
+  const order = await env.DB.prepare("SELECT account_id AS accountId, product_id AS productId FROM orders WHERE id = ?").bind(id).first();
+  if (!order) {
+    const entry = await env.DB.prepare("SELECT id FROM point_entries WHERE reference_id = ?").bind(id).first();
+    throw new HTTPError(409, entry ? "兑换请求编号已被使用" : "沙盒积分不足");
+  }
+  if (order.accountId !== accountId || order.productId !== productId) throw new HTTPError(409, "兑换请求编号已被使用");
   return demoState(env, accountId);
 }
 
@@ -341,7 +304,7 @@ function monadClients(env) {
     rpcUrls: { default: { http: [env.MONAD_RPC_URL] } },
   });
   const account = privateKeyToAccount(env.MONAD_PRIVATE_KEY);
-  const transport = http(env.MONAD_RPC_URL);
+  const transport = http(env.MONAD_RPC_URL, { timeout: 10_000, retryCount: 1 });
   return {
     account,
     wallet: createWalletClient({ account, chain, transport }),
@@ -354,6 +317,7 @@ async function createTokenMint(env, payload) {
   await ensureAccount(env, accountId);
   if (!isAddress(payload.recipient ?? "")) throw new HTTPError(400, "请输入有效的 EVM 钱包地址");
   const recipient = getAddress(payload.recipient);
+  if (/^0x0{40}$/i.test(recipient)) throw new HTTPError(400, "收款地址不能为零地址。");
   const policy = tokenPolicy(env);
   if (!policy.mintingEnabled || !policy.contractAddress) throw new HTTPError(503, "测试网铸币暂未开放");
   const claim = await env.DB.prepare(
@@ -361,40 +325,14 @@ async function createTokenMint(env, payload) {
   ).bind(accountId, policy.maxPointsPerMint).first();
   if (!claim) throw new HTTPError(409, "请先计算并领取样例 A 的睡眠积分");
 
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const tokenAmountWei = (BigInt(claim.awardedPoints) * 10n ** 18n).toString();
-  const inserted = await env.DB.prepare(
-    "INSERT INTO token_mints (id, account_id, claim_id, claim_commitment, recipient, points, token_amount_wei, status, contract_address, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ? WHERE (SELECT COUNT(*) FROM token_mints WHERE status IN ('preparing', 'submitted', 'confirmed')) < ? AND NOT EXISTS (SELECT 1 FROM token_mints WHERE claim_commitment = ? OR recipient = ?)",
-  ).bind(id, accountId, claim.id, claim.commitment, recipient, claim.awardedPoints, tokenAmountWei, policy.contractAddress, now, policy.maxMints, claim.commitment, recipient).run();
-  if (Number(inserted.meta?.changes ?? 0) !== 1) {
-    const existing = await env.DB.prepare("SELECT status FROM token_mints WHERE claim_commitment = ? OR recipient = ? LIMIT 1").bind(claim.commitment, recipient).first();
-    if (existing?.status === "confirmed") return demoState(env, accountId);
-    throw new HTTPError(409, existing ? "该睡眠凭证或收款地址已经提交过铸币" : `公开演示已达到 ${policy.maxMints} 笔上限`);
+  let clients;
+  try { clients = monadClients(env); } catch { throw new HTTPError(503, "测试网签名服务尚未配置，请稍后再试。"); }
+  const reservation = await reserveMint(env, { accountId, claim, recipient, policy });
+  if (reservation.mint.status !== "confirmed") {
+    if (reservation.process) await processMint(env, reservation.mint, clients);
+    else await reconcileMint(env, reservation.mint, clients);
   }
-
-  try {
-    const { account, wallet, client } = monadClients(env);
-    const simulation = await client.simulateContract({
-      account,
-      address: policy.contractAddress,
-      abi: TOKEN_ABI,
-      functionName: "mintSleepReward",
-      args: [recipient, BigInt(claim.awardedPoints), `0x${claim.commitment}`],
-    });
-    const transactionHash = await wallet.writeContract(simulation.request);
-    await env.DB.prepare("UPDATE token_mints SET status = 'submitted', transaction_hash = ? WHERE id = ?")
-      .bind(transactionHash, id).run();
-    const receipt = await client.waitForTransactionReceipt({ hash: transactionHash });
-    if (receipt.status !== "success") throw new Error("token mint transaction reverted");
-    await env.DB.prepare("UPDATE token_mints SET status = 'confirmed', block_number = ?, confirmed_at = ? WHERE id = ?")
-      .bind(Number(receipt.blockNumber), new Date().toISOString(), id).run();
-    return demoState(env, accountId);
-  } catch (error) {
-    await env.DB.prepare("UPDATE token_mints SET status = 'failed', error_message = ? WHERE id = ?")
-      .bind(String(error?.shortMessage ?? error?.message ?? error).slice(0, 240), id).run();
-    throw error;
-  }
+  return demoState(env, accountId);
 }
 
 async function resetDemo(env, accountId) {
@@ -436,12 +374,13 @@ async function prepareBatch(env) {
   return env.DB.prepare("SELECT id, merkle_root AS merkleRoot, scoring_version AS scoringVersion, claim_count AS claimCount, chain_status AS chainStatus, created_at AS createdAt FROM anchor_batches WHERE id = ?").bind(id).first();
 }
 
-async function anchorBatch(env, batchId) {
-  const batch = await env.DB.prepare("SELECT id, merkle_root AS merkleRoot, scoring_version AS scoringVersion, claim_count AS claimCount, chain_status AS chainStatus, transaction_hash AS transactionHash FROM anchor_batches WHERE id = ?").bind(batchId).first();
+async function anchorBatch(env, batchId, { waitMs = 8_000, allowPrepare = true } = {}) {
+  const batch = await env.DB.prepare("SELECT id, merkle_root AS merkleRoot, scoring_version AS scoringVersion, claim_count AS claimCount, chain_status AS chainStatus, transaction_hash AS transactionHash, block_number AS blockNumber FROM anchor_batches WHERE id = ?").bind(batchId).first();
   if (!batch) throw new HTTPError(404, "batch not found");
-  if (batch.chainStatus === "anchored") return batch;
+  if (batch.chainStatus === "anchored" && batch.transactionHash && batch.blockNumber) return batch;
   if (!/^0x[0-9a-fA-F]{40}$/.test(env.CONTRACT_ADDRESS ?? "")) throw new Error("CONTRACT_ADDRESS is not configured");
-  const { wallet, client } = monadClients(env);
+  const clients = monadClients(env);
+  const { client } = clients;
   const batchHash = `0x${await sha256Hex(batch.id)}`;
   const onchain = await client.readContract({
     address: env.CONTRACT_ADDRESS,
@@ -450,25 +389,53 @@ async function anchorBatch(env, batchId) {
     args: [batchHash],
   });
   if (onchain[3] > 0n) {
-    if (onchain[0].toLowerCase() !== `0x${batch.merkleRoot}`) throw new Error("on-chain batch root mismatch");
-    await env.DB.prepare("UPDATE anchor_batches SET chain_status = 'anchored', contract_address = ?, anchored_at = COALESCE(anchored_at, ?) WHERE id = ?")
-      .bind(env.CONTRACT_ADDRESS, new Date().toISOString(), batch.id).run();
+    if (onchain[0].toLowerCase() !== `0x${batch.merkleRoot}` || Number(onchain[1]) !== Number(batch.scoringVersion) || Number(onchain[2]) !== Number(batch.claimCount)) throw new MintHTTPError(503, "链上批次内容与本地记录不匹配，请人工核查。");
+    const saved = await submissionFor(env, `anchor:${batch.id}`);
+    const hash = saved?.transaction_hash ?? batch.transactionHash;
+    const receipt = hash ? await settleSubmission(env, clients, saved ?? { transaction_hash: hash }, { broadcast: false, waitMs: 0 }) : null;
+    await env.DB.prepare("UPDATE anchor_batches SET chain_status = 'anchored', transaction_hash = COALESCE(?, transaction_hash), block_number = COALESCE(?, block_number), contract_address = ?, anchored_at = COALESCE(anchored_at, ?) WHERE id = ?")
+      .bind(hash ?? null, receipt ? Number(receipt.blockNumber) : null, env.CONTRACT_ADDRESS, new Date(Number(onchain[3]) * 1_000).toISOString(), batch.id).run();
     return env.DB.prepare("SELECT id, merkle_root AS merkleRoot, claim_count AS claimCount, scoring_version AS scoringVersion, chain_status AS chainStatus, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, anchored_at AS anchoredAt FROM anchor_batches WHERE id = ?").bind(batch.id).first();
   }
-  const transactionHash = await wallet.writeContract({
+  const operationKey = `anchor:${batch.id}`;
+  let submission = await submissionFor(env, operationKey);
+  // Do not sign a replacement for an older broadcast whose outcome is unknown.
+  if (!submission && batch.transactionHash && batch.chainStatus === "submitted") submission = { transaction_hash: batch.transactionHash };
+  if (!submission && !allowPrepare) {
+    submission = await env.DB.prepare("SELECT * FROM chain_transactions WHERE operation_key = ? ORDER BY created_at DESC LIMIT 1").bind(operationKey).first();
+    if (!submission) return batch;
+  }
+  submission ??= await prepareSubmission(env, clients, {
+    operationKey,
     address: env.CONTRACT_ADDRESS,
     abi: CONTRACT_ABI,
     functionName: "anchorBatch",
     args: [batchHash, `0x${batch.merkleRoot}`, Number(batch.scoringVersion), Number(batch.claimCount)],
   });
+  const transactionHash = submission.transaction_hash;
   await env.DB.prepare("UPDATE anchor_batches SET chain_status = 'submitted', transaction_hash = ?, contract_address = ? WHERE id = ?")
     .bind(transactionHash, env.CONTRACT_ADDRESS, batch.id).run();
-  const receipt = await client.waitForTransactionReceipt({ hash: transactionHash });
-  if (receipt.status !== "success") throw new Error("anchor transaction reverted");
+  const receipt = await settleSubmission(env, clients, submission, { waitMs });
+  if (!receipt) return env.DB.prepare("SELECT id, merkle_root AS merkleRoot, claim_count AS claimCount, scoring_version AS scoringVersion, chain_status AS chainStatus, transaction_hash AS transactionHash, contract_address AS contractAddress FROM anchor_batches WHERE id = ?").bind(batch.id).first();
+  if (receipt.status !== "success") {
+    await env.DB.prepare("UPDATE anchor_batches SET chain_status = 'failed', block_number = ? WHERE id = ?").bind(Number(receipt.blockNumber), batch.id).run();
+    throw new MintHTTPError(503, "批次交易已回滚，管理员可以重试。");
+  }
   const anchoredAt = new Date().toISOString();
   await env.DB.prepare("UPDATE anchor_batches SET chain_status = 'anchored', transaction_hash = ?, contract_address = ?, block_number = ?, anchored_at = ? WHERE id = ?")
     .bind(transactionHash, env.CONTRACT_ADDRESS, Number(receipt.blockNumber), anchoredAt, batch.id).run();
   return env.DB.prepare("SELECT id, merkle_root AS merkleRoot, claim_count AS claimCount, scoring_version AS scoringVersion, chain_status AS chainStatus, transaction_hash AS transactionHash, contract_address AS contractAddress, block_number AS blockNumber, anchored_at AS anchoredAt FROM anchor_batches WHERE id = ?").bind(batch.id).first();
+}
+
+async function recoverChainOperations(env) {
+  // Recover signed anchor transactions too: an unsent earlier nonce must not
+  // permanently block subsequent mint transactions from the shared signer.
+  await recoverSubmissions(env, monadClients);
+  await reconcileMints(env, monadClients);
+  const rows = (await env.DB.prepare("SELECT id FROM anchor_batches WHERE (chain_status IN ('prepared', 'submitted') OR (chain_status = 'anchored' AND (transaction_hash IS NULL OR block_number IS NULL))) AND EXISTS (SELECT 1 FROM chain_transactions WHERE operation_key = 'anchor:' || anchor_batches.id) ORDER BY created_at LIMIT 5").all()).results;
+  for (const row of rows) {
+    try { await anchorBatch(env, row.id, { waitMs: 0, allowPrepare: false }); } catch { console.error('Anchor reconciliation pending', row.id); }
+  }
 }
 
 
@@ -492,8 +459,9 @@ function page(language = "zh") {
 .value-section{scroll-margin-top:20px;padding:clamp(20px,3.5vw,34px);background:linear-gradient(145deg,#102739,#111d32 48%,#1a2040);border-color:#35536c}.value-heading{max-width:810px}.value-heading h2{font-size:clamp(32px,4.5vw,46px);margin:7px 0 8px;letter-spacing:-.035em}.value-lead{font-size:clamp(20px,2.6vw,27px);line-height:1.4;font-weight:750;color:var(--mint);margin:0 0 16px}.value-question{margin:24px 0;padding:20px 22px;border-left:3px solid var(--mint);background:rgba(6,18,31,.7);border-radius:0 15px 15px 0}.value-label{display:block;font-size:12px;font-weight:750;color:var(--gold);letter-spacing:.035em}.value-question>p{margin:7px 0 12px}.value-question>strong{display:block;font-size:19px;line-height:1.5}.value-question>p:last-child{margin:10px 0 0}.value-subtitle{font-size:23px;margin:30px 0 16px}.funding-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.funding-card{padding:20px;background:rgba(7,18,32,.74);border:1px solid #2b455e;border-radius:16px}.funding-number{display:inline-flex;align-items:center;justify-content:center;width:33px;height:33px;margin-bottom:14px;background:#123c3c;border:1px solid #2e645d;border-radius:10px;font:750 12px ui-monospace,SFMono-Regular,monospace;color:var(--mint)}.funding-card h4{font-size:18px;line-height:1.4;margin:0 0 10px}.funding-card p{color:#b9cadd;font-size:14px;line-height:1.7;margin:0}.funding-capital{border-color:#534d73;background:rgba(28,25,52,.8)}.funding-capital .funding-number{background:#352c54;border-color:#605482;color:#d2c7ff}.value-case{margin-top:28px;padding:24px;border:1px solid #3d536e;border-radius:18px;background:linear-gradient(135deg,rgba(25,55,69,.9),rgba(21,26,51,.88))}.value-case>h3{font-size:25px;margin:8px 0 12px;line-height:1.3}.value-case>p{max-width:790px;margin:0 0 24px;color:#c1d2e2}.value-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px;list-style:none;margin:0;padding:0}.value-flow li{position:relative;min-width:0;background:#0b1a2c;border:1px solid #30475e;border-radius:13px;padding:16px}.flow-number{font:750 12px ui-monospace,SFMono-Regular,monospace;color:var(--mint);display:block;margin-bottom:10px}.value-flow h4{font-size:16px;line-height:1.4;margin:0 0 8px}.value-flow p{font-size:13px;line-height:1.6;color:#b5c7dd;margin:0}.value-flow li:not(:last-child)::after{content:"→";position:absolute;right:-19px;top:19px;color:var(--mint);font-size:18px}.value-payoff{display:grid;grid-template-columns:1fr 1fr;gap:22px;border-top:1px solid #3a4e66;padding-top:22px;margin-top:24px}.value-payoff strong{display:block;margin:7px 0 9px;font-size:18px;line-height:1.5}.value-payoff p{margin:0;font-size:14px;line-height:1.7;color:#b9cadd}.value-outcomes{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:26px 0}.value-outcomes>div{padding:2px 0 2px 16px;border-left:2px solid #507392}.value-outcomes p{font-size:19px;font-weight:650;line-height:1.5;margin:8px 0 0}.value-closing{padding:22px;border-radius:16px;border:1px solid #366b64;background:rgba(20,57,55,.47)}.value-closing h3{font-size:26px;color:var(--mint);margin:0 0 10px}.value-closing p{margin:0 0 14px;color:#d0dfeb}.value-closing a{display:inline-block;font-size:14px;text-underline-offset:4px}.value-status{margin:20px 0 0;line-height:1.7}:lang(en) .value-heading h2{font-size:clamp(32px,4.5vw,46px);text-wrap:balance}:lang(en) .value-section h3,:lang(en) .value-section h4{text-wrap:balance}
 @media(max-width:900px){.funding-grid,.value-flow{grid-template-columns:repeat(2,minmax(0,1fr))}.value-flow li::after{display:none}}
 @media(max-width:600px){.funding-grid,.value-flow,.value-payoff,.value-outcomes{grid-template-columns:1fr}.value-question{padding:16px}.funding-card{padding:18px}.value-case{padding:18px;margin-top:22px}.value-case>h3{font-size:23px}.value-flow{gap:10px}.value-flow li{display:grid;grid-template-columns:25px minmax(0,1fr);column-gap:10px;padding:15px}.flow-number{grid-column:1;grid-row:1/3;margin:2px 0 0}.value-flow h4,.value-flow p{grid-column:2}.value-payoff{gap:22px}.value-outcomes{gap:18px;margin:22px 0}.value-outcomes p{font-size:18px}.value-closing{padding:18px}.value-closing h3{font-size:24px}:lang(en) .value-heading h2{font-size:34px}:lang(en) .value-subtitle{font-size:22px}}
+.opening-app{display:flex;align-items:center;justify-content:center;gap:10px;width:fit-content;min-height:50px;margin:25px auto 16px;padding:12px 24px;border:1px solid #97dbc4;border-radius:999px;background:#b7ead8;color:#122c27;font-size:15px;font-weight:750;letter-spacing:0;box-shadow:0 8px 35px #71d5bb18}.opening-app:hover{background:#d2f4e7}.opening-app:focus-visible{outline:3px solid #fff;outline-offset:5px}
 </style></head><body><a class="language-switch" href="?lang=${language === 'en' ? 'zh' : 'en'}" hreflang="${language === 'en' ? 'zh-CN' : 'en'}" lang="${language === 'en' ? 'zh-CN' : 'en'}" aria-label="${language === 'en' ? '切换为中文' : 'Switch to English'}" onclick="switchLanguage(event)"><span aria-hidden="true">◎</span>${language === 'en' ? '中文' : 'English'}</a><main class="wrap">
-<section id="opening" class="opening" aria-labelledby="opening-question"><div class="opening-inner"><div class="opening-kicker">MOMO Sleep · Hackathon</div><h1 id="opening-question">睡眠满八小时<span class="question-mark">？</span></h1><p class="opening-prompt">你昨晚睡了几个小时？</p><a class="opening-next" href="#team" aria-label="继续查看团队介绍">认识 MOMO Sleep 团队 ↓</a></div></section>
+<section id="opening" class="opening" aria-labelledby="opening-question"><div class="opening-inner"><div class="opening-kicker">MOMO Sleep · Hackathon</div><h1 id="opening-question">睡眠满八小时<span class="question-mark">？</span></h1><p class="opening-prompt">你昨晚睡了几个小时？</p><a class="opening-app" href="/app" aria-label="打开手机端应用">体验 MOMO App <span aria-hidden="true">↗</span></a><a class="opening-next" href="#team" aria-label="继续查看团队介绍">认识 MOMO Sleep 团队 ↓</a></div></section>
 <section id="team" class="team-intro" aria-labelledby="team-title"><header class="team-heading"><div class="eyebrow">Who we are · 团队介绍</div><h2 id="team-title">我们是 MOMO Sleep</h2><p>把鼠标移到人物身上，或在手机上点按，认识正在构建睡眠经济系统的我们。</p></header><div class="team-stage" data-active="momo" aria-label="MOMO Sleep 三人团队互动合照" aria-describedby="team-hint"><svg class="team-backdrop" viewBox="0 0 1672 941" aria-hidden="true" focusable="false"><defs><filter id="team-person-erase" x="-2%" y="-2%" width="104%" height="104%"><feMorphology in="SourceAlpha" operator="dilate" radius="80"/><feGaussianBlur stdDeviation="25"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0"/></filter><mask id="team-original-background" maskUnits="userSpaceOnUse" x="0" y="0" width="1672" height="941" style="mask-type:luminance"><rect width="1672" height="941" fill="white"/><g filter="url(#team-person-erase)"><image href="/assets/team/team-portrait-frank-cutout-v3.png" width="1672" height="941"/><image href="/assets/team/team-portrait-momo-cutout-v3.png" width="1672" height="941"/><image href="/assets/team/team-portrait-anne-cutout-v3.png" width="1672" height="941"/></g></mask></defs><image href="/assets/team/team-backdrop-restored-v1.png" width="1672" height="941"/><image href="/assets/team/team-portrait-hero-v2.png" width="1672" height="941" mask="url(#team-original-background)"/></svg><img class="team-portrait team-portrait-base-frank" src="/assets/team/team-portrait-frank-cutout-v3.png" alt=""><img class="team-portrait team-portrait-base-anne" src="/assets/team/team-portrait-anne-cutout-v3.png" alt=""><img class="team-portrait-momo-default" src="/assets/team/team-portrait-momo-cutout-v5.png" alt=""><button class="team-member frank" type="button" data-team-member="frank" aria-label="查看 Frank 林睿资料" aria-controls="team-detail" aria-pressed="false"></button><button class="team-member momo" type="button" data-team-member="momo" aria-label="查看 Momo 奕铭资料" aria-controls="team-detail" aria-pressed="true"></button><button class="team-member anne" type="button" data-team-member="anne" aria-label="查看 Anne 星仪资料" aria-controls="team-detail" aria-pressed="false"></button></div><div id="team-detail" class="team-detail" aria-live="polite" aria-atomic="true"><div class="team-identity"><div class="team-index">02 / PROJECT LEAD</div><h3>Momo 奕铭</h3><p class="team-role">项目负责人</p><div class="team-tags"><span class="team-tag">INTP</span><span class="team-tag">丁火男</span></div></div><div class="team-profile"><div><span class="team-profile-label">教育与专业背景</span><div class="team-education">广东外语外贸大学 · 金融专业背景</div></div><p class="team-contribution">AI 自媒体博主，专注 AI 开发、期权与 Web3 交易。</p></div></div><p id="team-hint" class="team-hint">电脑：悬停或按 Tab 聚焦 · 手机：直接点按成员</p></section>
 <section id="project" class="hero"><span class="badge">Website v1.1 · 中国合规路径 + 海外测试网路径</span><h2 class="hero-title">让睡眠成为可信资产</h2><p class="lead">MOMO 睡眠经济系统把智能唤醒、可穿戴数据、AI 反馈、产品真实世界研究与隐私审计连接起来。中国版使用品牌预算和中心化积分结算；海外版演示把合格积分铸造为链上代币。</p><p class="muted">当前页面不连接或上传 HealthKit；样例 A 是用户明确授权公开的睡眠截图与手工汇总。中国版不发币；海外板块只铸造无主网价值的 Monad Testnet SLEEP 演示代币，无交易市场、无流动性、不承诺收益。</p><nav class="nav" aria-label="页面导航"><a href="#quality-score">四维计分</a><a href="#sandbox">体验沙盒</a><a href="#cashout">人民币兑付</a><a href="#tokenize">海外铸币</a><a href="#external-value">外部资金来源</a><a href="#stepn">STEPN 教训</a><a href="#market">市场规模</a></nav></section>
 <section id="quality-score" class="card"><div class="eyebrow">Deterministic score · 四维激励 V2</div><h2>每一分都能从睡眠数据复算</h2><p class="section-intro">当前演示把一晚睡眠拆成时长、深度、连续性和规律性四层。计分规则带版本号；同一输入得到同一结果，服务器重新计算后才写入沙盒账本。</p><div class="score-grid"><div class="score-card"><strong>① 最多 480 分钟</strong><span>整晚各阶段按比例最多折算 480 分钟；超过部分不继续增加。</span></div><div class="score-card"><strong>② 深睡目标 25%</strong><span>Core 1×、REM 2×；Deep 在目标附近为 3×，偏高或偏低逐渐回落。</span></div><div class="score-card"><strong>③ 每次中断都扣权重</strong><span>内部清醒次数和清醒总分钟共同降低连续性系数，最低保留 0.70。</span></div><div class="score-card"><strong>④ 与个人节律比较</strong><span>正式版使用多晚个人基线；本页单晚样例只与演示目标作息比较。</span></div></div><div class="equation">阶段分钟小计 × 连续性系数 × 规律性系数 = 本晚沙盒积分</div><div class="callout"><b>产品参数，不是医学诊断：</b>25% 是当前可版本化的激励曲线中心，不是适用于所有人的统一“最佳深睡”标准。研究参与补偿仍奖励有效参与，不按健康结果高低发放。</div></section>
@@ -584,9 +552,21 @@ const dataTranslations={
   "当前积分不足": "Not enough points in the current balance",
   "已有一笔待接入兑付申请，请先完成或取消": "A payout request is already pending integration. Complete or cancel it first.",
   "请输入有效的 EVM 钱包地址": "Enter a valid EVM wallet address",
+  "收款地址不能为零地址。": "The recipient cannot be the zero address.",
+  "测试网签名服务尚未配置，请稍后再试。": "The testnet signing service is not configured. Retry later.",
   "测试网铸币暂未开放": "Testnet minting is not available yet",
   "请先计算并领取样例 A 的睡眠积分": "Calculate and claim sleep points for Sample A first",
   "该睡眠凭证或收款地址已经提交过铸币": "A mint request has already been submitted for this sleep claim or recipient address",
+  "该收款地址已用于另一份睡眠凭证，请使用新的地址。": "This recipient address was used for a different sleep claim. Use a new address.",
+  "这份睡眠凭证已绑定其他收款地址。": "This sleep claim is already linked to a different recipient address.",
+  "测试网签名队列忙，请稍后重试。": "The testnet signing queue is busy. Retry shortly.",
+  "RPC 网络不匹配，已停止签名；当前只支持 Monad Testnet 10143。": "The RPC network does not match. Signing stopped; only Monad Testnet 10143 is supported.",
+  "RPC 网络不匹配，已停止铸币；需要 Monad Testnet 10143。": "The RPC network does not match. Minting stopped; Monad Testnet 10143 is required.",
+  "无法取得测试网 gas 报价，请稍后重试。": "A testnet gas quote is unavailable. Retry shortly.",
+  "服务器测试网 MON 余额不足，尚未发送交易。": "The server has insufficient testnet MON. No transaction has been sent.",
+  "签名队列租约已过期，请重试；尚未广播交易。": "The signing queue reservation expired. Retry; no transaction has been broadcast.",
+  "服务器签名地址不是合约 owner，已停止铸币。": "The server signer is not the contract owner. Minting stopped.",
+  "测试网处理暂时不可用，请刷新状态后重试。": "Testnet processing is temporarily unavailable. Refresh the status before retrying.",
   "服务器暂时不可用": "The server is temporarily unavailable",
   "preparing": "Preparing",
   "submitted": "Submitted",
@@ -597,37 +577,50 @@ const dataTranslations={
   "anchored": "Anchored"
 };
 function translateData(value){if(language!=='en'||typeof value!=='string')return value;return dataTranslations[value]??value.replace(/^最低兑换 ([0-9]+) 积分$/,'Minimum redemption: $1 points').replace(/^单次最多兑换 ([0-9]+) 积分$/,'Maximum per redemption: $1 points').replace(/^公开演示已达到 ([0-9]+) 笔上限$/,'The public demo has reached its limit of $1 mints')}
-let currentState=null;
+let currentState=null,tokenMintBusy=false,tokenPollTimer=null,tokenPollAttempts=0;
 const stageCopy={awake:{title:t('清醒：不产生阶段积分','Awake: no stage points'),body:t('清醒时间不会获得睡眠阶段积分，但会降低这一晚的连续性系数。以下两项扣减只影响整晚最终积分。','Awake time earns no sleep-stage points and reduces the continuity factor for the night. The two deductions below affect only the final nightly total.'),rows:[[t('清醒阶段积分','Awake-stage points'),t('0 分','0 points')],[t('初始连续性系数','Starting continuity factor'),'100%'],[t('6 次中断扣减','Deduction for 6 interruptions'),'12.0%'],[t('31 分钟清醒扣减','Deduction for 31 awake minutes'),'3.1%'],[t('最终连续性系数','Final continuity factor'),'84.9%']]},rem:{title:t('快速眼动：每分钟 2 分','REM: 2 points per minute'),body:t('快速眼动睡眠计入有效睡眠。本样例有 50 分钟，按每分钟 2 分计算。','REM counts as effective sleep. This sample contains 50 minutes, earning 2 points per minute.'),rows:[[t('计分时长','Scored duration'),t('50 分钟','50 minutes')],[t('每分钟积分','Points per minute'),t('2 分','2 points')],[t('快速眼动阶段积分','REM-stage points'),t('100 分','100 points')]]},core:{title:t('浅睡：每分钟 1 分','Core: 1 point per minute'),body:t('浅睡是阶段积分的基础计分项。本样例有 250 分钟，按每分钟 1 分计算。','Core sleep is the base component of stage scoring. This sample contains 250 minutes, earning 1 point per minute.'),rows:[[t('计分时长','Scored duration'),t('250 分钟','250 minutes')],[t('每分钟积分','Points per minute'),t('1 分','1 point')],[t('浅睡阶段积分','Core-stage points'),t('250 分','250 points')]]},deep:{title:t('深睡：本晚每分钟 2.926 分','Deep: 2.926 points per minute tonight'),body:t('当前模型把 25% 设为深睡激励曲线中心，不是医学标准。本晚深睡占实际睡眠 25.9%，因此每分钟积分从最高 3 分轻微降为 2.926 分。','This model centers its deep-sleep reward curve at 25%; this is not a medical standard. Deep sleep makes up 25.9% of actual sleep tonight, so points per minute decrease slightly from the maximum of 3 to 2.926.'),rows:[[t('实际睡眠总时长','Total actual sleep'),t('405 分钟','405 minutes')],[t('深睡时长','Deep-sleep duration'),t('105 分钟','105 minutes')],[t('本晚深睡占比','Deep-sleep share tonight'),'25.9%'],[t('模型曲线中心','Model curve center'),'25%'],[t('本晚每分钟积分','Points per minute tonight'),t('2.926 分','2.926 points')],[t('深睡阶段积分','Deep-stage points'),t('约 307.2 分','About 307.2 points')]]}};
 function showStage(stage){const info=stageCopy[stage];if(!info)return;document.querySelectorAll('.stage-hotspot').forEach(button=>{const active=button.dataset.stage===stage;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))});const detail=el('stage-detail');detail.dataset.stage=stage;const rows=info.rows.map(row=>'<div class="stage-breakdown-row"><span>'+esc(row[0])+'</span><strong>'+esc(row[1])+'</strong></div>').join('');detail.innerHTML=t('<div class="stage-hint">当前颜色的积分明细</div><h3>','<div class="stage-hint">Points for the selected stage</div><h3>')+esc(info.title)+'</h3><p>'+esc(info.body)+'</p><div class="stage-breakdown">'+rows+'</div>'}
 document.querySelectorAll('.stage-hotspot').forEach(button=>{button.addEventListener('mouseenter',()=>showStage(button.dataset.stage));button.addEventListener('focus',()=>showStage(button.dataset.stage));button.addEventListener('click',()=>showStage(button.dataset.stage))});
-async function api(path,body){const response=await fetch(path,{method:body?'POST':'GET',headers:{'content-type':'application/json'},body:body?JSON.stringify({...body,accountId}):undefined});const data=await response.json();if(!response.ok)throw new Error(translateData(data.error)||'request failed');return data}
+async function api(path,body){const response=await fetch(path,{method:body?'POST':'GET',headers:{'content-type':'application/json'},body:body?JSON.stringify({...body,accountId}):undefined});const data=await response.json();if(!response.ok)throw new Error(translateData(data.error)||'request failed');const conversion={'/api/demo/claims':'claim','/api/demo/orders':'redeem','/api/demo/cash-redemptions':'cash-request','/api/demo/token-mints':'token-request'}[path];if(body&&conversion)window.dispatchEvent(new CustomEvent('momo:conversion',{detail:conversion}));return data}
 function cards(items,render,empty=t('暂无记录','No records yet')){return items.length?items.map(render).join(''):'<p class="muted">'+empty+'</p>'}
 function short(v){return v?esc(v.slice(0,12)+'…'+v.slice(-10)):'—'}
 function yuan(amountFen){return '¥'+(Number(amountFen||0)/100).toFixed(2)}
 function updateCashEstimate(){const policy=currentState?.cashPolicy,input=el('cash-points'),button=el('cash-submit');if(!policy||!input||!button)return;const points=Number(input.value);const valid=Number.isInteger(points)&&points>=policy.minimumPoints&&points<=policy.maximumPoints&&points<=currentState.account.points;const amountFen=valid?Math.floor(points*policy.rateFenPer100Points/100):0;el('cash-estimate').textContent=valid?yuan(amountFen):'¥0.00';button.disabled=!valid;el('cash-limit').textContent=t('最低 ','Minimum ')+policy.minimumPoints+t(' 积分 · 单次最多 ',' points · Maximum per request ')+policy.maximumPoints+t(' · 当前余额 ',' · Current balance ')+currentState.account.points}
 function renderCash(s){const policy=s.cashPolicy;el('cash-mode').textContent=policy.payoutEnabled?t('真实兑付已开通','Live payouts enabled'):t('试点接入准备中','Pilot integration pending');el('cash-rate').textContent=t('当期兑付率：100 积分 = ','Current redemption rate: 100 points = ')+yuan(policy.rateFenPer100Points)+t('（可浮动区间 ',' (variable range ')+yuan(policy.rateFloorFenPer100Points)+'–'+yuan(policy.rateCeilingFenPer100Points)+t('）',')');el('sponsor-budget').textContent=translateData(policy.sponsorBudgetStatus);el('payout-channel').textContent=translateData(policy.payoutChannel);el('cash-redemptions').innerHTML=cards(s.cashRedemptions,r=>'<div class="item"><b>'+yuan(r.amountFen)+' · '+r.points+t(' 积分</b><p class="truth">接入准备中 · 尚未打款</p><small>锁定汇率：100 积分 = ',' points</b><p class="truth">Integration pending · No payment sent</p><small>Locked rate: 100 points = ')+yuan(r.rateFenPer100Points)+t('<br>申请编号：<span class="mono">','<br>Request ID: <span class="mono">')+short(r.id)+t('</span><br>收款渠道：','</span><br>Payout channel: ')+esc(translateData(r.payoutChannel))+'</small></div>',t('尚无兑付申请','No payout requests yet'));updateCashEstimate()}
-function tokenMintCard(r,explorer){const confirmed=r.status==='confirmed';return '<div class="item"><b>'+r.points+' SLEEP · '+(confirmed?t('真实已确认','Confirmed on-chain'):esc(translateData(r.status)))+'</b><p class="'+(confirmed?'truth':'muted')+'">Monad Testnet'+(r.blockNumber?t(' · 区块 #',' · Block #')+r.blockNumber:'')+t('</p><small class="mono">收款 ','</p><small class="mono">Recipient ')+short(r.recipient)+t('<br>睡眠承诺 ','<br>Sleep commitment ')+short(r.claimCommitment)+'</small><br>'+(r.transactionHash?'<a target="_blank" rel="noreferrer" href="'+esc(explorer+'/tx/'+r.transactionHash)+t('">查看真实铸币交易</a>','">View on-chain mint transaction</a>'):'')+'</div>'}
-function updateTokenMint(){const policy=currentState?.tokenPolicy,input=el('token-recipient'),button=el('token-submit');if(!policy||!input||!button)return;const claim=currentState.claims.find(c=>c.status==='accepted');const valid=/^0x[0-9a-fA-F]{40}$/.test(input.value.trim());const already=currentState.tokenMints.length>0;el('token-estimate').textContent=(claim?.awardedPoints||0)+' SLEEP';el('token-limit').textContent=already?t('该睡眠凭证已提交铸币','Mint request already submitted for this sleep claim'):claim?t('将 ','Mint ')+claim.awardedPoints+t(' 积分铸造为 ',' points as ')+claim.awardedPoints+' SLEEP':t('请先计算样例 A 的睡眠积分','Calculate sleep points for Sample A first');button.disabled=!policy.mintingEnabled||!claim||!valid||already}
+function tokenMintStatus(record){if(!record)return t('尚无铸币记录','No mint record yet');if(record.status==='confirmed'&&record.blockNumber&&record.transactionHash)return t('铸币成功：','Mint successful: ')+record.points+t(' SLEEP 已写入区块 #',' SLEEP recorded in block #')+record.blockNumber;if(record.status==='needs_review')return t('交易结果待核查，暂不重新发送，以免重复铸币。','The transaction needs review. A new mint will not be sent.');if(record.retryable)return t('本次未完成铸币，可以安全重试。','This mint did not complete. You can retry safely.');return t('交易正在准备或等待链上确认；尚未确认成功。','Preparing the transaction or awaiting on-chain confirmation; success is not confirmed yet.')}
+function currentTokenMint(){const claim=currentState?.claims.find(c=>c.status==='accepted');return currentState?.tokenMints.find(r=>r.claimId===claim?.id)}
+function tokenMintCard(r,explorer){const confirmed=r.status==='confirmed';return '<div class="item"><b>'+r.points+' SLEEP · '+(confirmed?t('真实已确认','Confirmed on-chain'):esc(tokenMintStatus(r)))+'</b><p class="'+(confirmed?'truth':'muted')+'">Monad Testnet'+(r.blockNumber?t(' · 区块 #',' · Block #')+r.blockNumber:'')+t('</p><small class="mono">收款 ','</p><small class="mono">Recipient ')+short(r.recipient)+t('<br>睡眠承诺 ','<br>Sleep commitment ')+short(r.claimCommitment)+'</small><br>'+(r.transactionHash?'<a target="_blank" rel="noreferrer" href="'+esc(explorer+'/tx/'+r.transactionHash)+t('">查看铸币交易状态</a>','">View mint transaction status</a>'):'')+'</div>'}
+function updateTokenMint(){const policy=currentState?.tokenPolicy,input=el('token-recipient'),button=el('token-submit');if(!policy||!input||!button)return;const claim=currentState.claims.find(c=>c.status==='accepted'),record=currentTokenMint(),pending=record&&!record.retryable&&['preparing','submitted'].includes(record.status);if(record&&!input.value)input.value=record.recipient;const valid=/^0x[0-9a-fA-F]{40}$/.test(input.value.trim())&&!/^0x0{40}$/i.test(input.value.trim());input.disabled=Boolean(record&&!record.retryable);el('token-estimate').textContent=(claim?.awardedPoints||0)+' SLEEP';el('token-limit').textContent=record?tokenMintStatus(record):claim?t('将 ','Mint ')+claim.awardedPoints+t(' 积分铸造为 ',' points as ')+claim.awardedPoints+' SLEEP':t('请先计算样例 A 的睡眠积分','Calculate sleep points for Sample A first');button.textContent=pending?t('检查链上确认','Check on-chain confirmation'):record?.retryable?t('重试铸币','Retry mint'):t('在 Monad Testnet 真实铸币','Mint on Monad Testnet');button.disabled=tokenMintBusy||(!pending&&(!policy.mintingEnabled||!claim||!valid||Boolean(record&&!record.retryable)));if(pending&&!tokenMintBusy&&!tokenPollTimer&&tokenPollAttempts<12)tokenPollTimer=setTimeout(()=>{tokenPollTimer=null;tokenPollAttempts++;checkTokenMint()},5000);if(!pending&&tokenPollTimer){clearTimeout(tokenPollTimer);tokenPollTimer=null}}
 function renderToken(s){const policy=s.tokenPolicy,explorer=s.network.explorerURL;el('token-mode').textContent=policy.mintingEnabled?t('真实 Monad Testnet 铸币已开放','Live Monad Testnet minting enabled'):t('测试网铸币暂未开放','Testnet minting is not available yet');el('token-contract').innerHTML='<b>'+esc(policy.tokenName)+' ('+esc(policy.tokenSymbol)+')</b><br>Chain ID '+s.network.chainId+t(' · 合约 <a target="_blank" rel="noreferrer" href="',' · Contract <a target="_blank" rel="noreferrer" href="')+esc(explorer+'/address/'+policy.contractAddress)+'"><span class="mono">'+short(policy.contractAddress)+'</span></a>'+(policy.deploymentTransactionHash?'<br><a target="_blank" rel="noreferrer" href="'+esc(explorer+'/tx/'+policy.deploymentTransactionHash)+t('">查看真实合约部署交易</a>','">View on-chain contract deployment</a>'):'');el('my-token-mints').innerHTML=cards(s.tokenMints,r=>tokenMintCard(r,explorer),t('尚无个人铸币记录','No personal mint records yet'));el('public-token-mints').innerHTML=cards(s.publicTokenMints,r=>tokenMintCard(r,explorer),t('首笔真实测试网铸币尚未执行','No live testnet mint has been completed yet'));updateTokenMint()}
 function scoreDetails(b){if(!b)return t('<span class="muted">尚未计算样例 A。</span>','<span class="muted">Sample A has not been calculated yet.</span>');const m=b.stageMinutes||{};const notes=(b.inputNotes||[]).map(n=>'<li>'+esc(translateData(n))+'</li>').join('');const vendor=b.vendorReportedDeepPercent==null?'':t('；设备展示 ','; device reports ')+b.vendorReportedDeepPercent+t('%（分母含清醒）','% (including awake time in the denominator)');return '<h3>'+esc(translateData(b.sourceLabel))+' · '+b.awardedPoints+t(' 积分</h3><div class="score-grid"><div class="score-card"><strong>',' points</h3><div class="score-grid"><div class="score-card"><strong>')+b.countedMinutes+t(' / 480 分钟</strong><span>有效睡眠；清醒 ',' / 480 minutes</strong><span>Effective sleep; ')+b.awakeMinutes+t(' 分钟不计基础分</span></div><div class="score-card"><strong>计分深睡 ',' awake minutes earn no base points</span></div><div class="score-card"><strong>Scored deep sleep ')+b.deepRatioPercent+t('%</strong><span>目标 ','%</strong><span>Target ')+b.targetDeepPercent+t('% · 有效 Deep 权重 ','% · Effective Deep weight ')+b.effectiveDeepWeight+'×'+vendor+t('</span></div><div class="score-card"><strong>连续性 × ','</span></div><div class="score-card"><strong>Continuity × ')+b.continuityFactor.toFixed(3)+'</strong><span>'+b.interruptionCount+t(' 次估计中断 · 清醒 ',' estimated interruptions · Awake ')+b.awakeMinutes+t(' 分钟</span></div><div class="score-card"><strong>规律性 × ',' minutes</span></div><div class="score-card"><strong>Regularity × ')+b.regularityFactor.toFixed(3)+'</strong><span>'+esc(translateData(b.regularityBasis))+t('</span></div></div><p class="mono">浅睡 ','</span></div></div><p class="mono">Core ')+(m.core||0)+'×1 + REM '+(m.rem||0)+t('×2 + 深睡 ','×2 + Deep ')+(m.deep||0)+'×'+b.effectiveDeepWeight+' = '+b.stagePoints+t(' 阶段分</p><div class="equation">',' stage points</p><div class="equation">')+b.stagePoints+' × '+b.continuityFactor.toFixed(3)+' × '+b.regularityFactor.toFixed(3)+' = '+b.awardedPoints+t(' 积分</div><ul class="fine-print">',' points</div><ul class="fine-print">')+notes+'</ul>'}
 function render(s){currentState=s;el('balance').textContent=s.account.points;const scored=s.claims.find(c=>c.scoreBreakdown)?.scoreBreakdown;el('calculation').innerHTML=scoreDetails(scored);renderCash(s);renderToken(s);el('products').innerHTML=cards(s.products,p=>'<div class="item"><b>'+esc(translateData(p.title))+'</b><p>'+p.pricePoints+t(' 积分</p><button class="alt buy" data-product="',' points</p><button class="alt buy" data-product="')+esc(p.id)+t('">兑换</button></div>','">Redeem</button></div>'));el('claims').innerHTML=cards(s.claims,c=>'<div class="item"><b>'+esc(c.nightKey)+' · +'+c.awardedPoints+t(' 积分</b>',' points</b>')+(c.scoreBreakdown?t('<p>四维 V','<p>Four-factor V')+c.scoreBreakdown.scoringVersion+t(' · 阶段分 ',' · Stage points ')+c.scoreBreakdown.stagePoints+t(' → 实发 ',' → Awarded ')+c.awardedPoints+'</p>':'')+t('<p class="truth">模拟确认 · ','<p class="truth">Simulated confirmation · ')+c.chainReceipt.confirmations+t(' 次确认</p><small class="mono">凭证 ',' confirmations</p><small class="mono">Claim ')+short(c.chainReceipt.claimHash)+t('<br>交易 ','<br>Transaction ')+short(c.chainReceipt.transactionHash)+t('<br>区块 #','<br>Block #')+c.chainReceipt.blockNumber+t('<br>合约固定，凭证与交易唯一</small></div>','<br>Fixed contract; unique claim and transaction</small></div>'));el('orders').innerHTML=cards(s.orders,o=>'<div class="item"><b>'+esc(translateData(o.title))+'</b><p>-'+o.pricePoints+t(' 积分</p><p class="truth">模拟确认 · ',' points</p><p class="truth">Simulated confirmation · ')+o.chainReceipt.confirmations+t(' 次确认</p><small class="mono">兑换凭证 ',' confirmations</p><small class="mono">Redemption claim ')+short(o.chainReceipt.claimHash)+t('<br>交易 ','<br>Transaction ')+short(o.chainReceipt.transactionHash)+t('<br>模拟区块 #','<br>Simulated block #')+o.chainReceipt.blockNumber+t('<br>合约固定，每笔消费凭证唯一</small></div>','<br>Fixed contract; each redemption has a unique claim</small></div>'));el('network').innerHTML=esc(s.network.name)+' · Chain ID '+s.network.chainId+t('<br>固定审计合约：<span class="mono">','<br>Fixed audit contract: <span class="mono">')+esc(s.network.contractAddress||t('待部署','Deployment pending'))+'</span>';el('batches').innerHTML=cards(s.batches,b=>'<div class="item"><b>'+esc(b.id)+'</b><p>'+b.claimCount+t(' 份凭证 · V',' claims · V')+b.scoringVersion+' · '+esc(translateData(b.chainStatus))+'</p><small class="mono">Merkle Root '+short(b.merkleRoot)+(b.blockNumber?t('<br>真实区块 #','<br>On-chain block #')+b.blockNumber:'')+'</small><br>'+(b.transactionHash?'<a target="_blank" rel="noreferrer" href="'+esc(s.network.explorerURL+'/tx/'+b.transactionHash)+t('">查看真实测试网交易</a>','">View on-chain testnet transaction</a>'):'')+'</div>');document.querySelectorAll('.buy').forEach(button=>button.onclick=()=>buy(button.dataset.product))}
 async function refresh(){try{render(await api('/api/demo/state?accountId='+encodeURIComponent(accountId)))}catch(e){el('status').textContent=translateData(e.message)}}
 async function action(path,body,message){try{el('status').textContent=t('处理中…','Processing…');const state=await api(path,body);render(state);el('status').textContent=typeof message==='function'?message(state):message}catch(e){el('status').textContent=translateData(e.message)}}
 async function requestCashRedemption(){const points=Number(el('cash-points').value);try{el('cash-status').textContent=t('正在提交兑付申请…','Submitting payout request…');const state=await api('/api/demo/cash-redemptions',{points});render(state);const record=state.cashRedemptions[0];el('cash-status').textContent=t('已记录 ','Recorded ')+record.points+t(' 积分 ≈ ',' points ≈ ')+yuan(record.amountFen)+t('；当前未扣积分、未发起真实打款。','; no points have been deducted and no real payment has been initiated.')}catch(e){el('cash-status').textContent=translateData(e.message)}}
-async function requestTokenMint(){const recipient=el('token-recipient').value.trim();try{el('token-status').textContent=t('正在签名并发送 Monad Testnet 交易…','Signing and sending the Monad Testnet transaction…');const state=await api('/api/demo/token-mints',{recipient});render(state);const record=state.tokenMints[0];el('token-status').innerHTML=record?.transactionHash?t('铸币成功：','Mint successful: ')+record.points+t(' SLEEP 已写入区块 #',' SLEEP recorded in block #')+record.blockNumber+t('。','.'):t('铸币请求已记录。','Mint request recorded.')}catch(e){el('token-status').textContent=translateData(e.message)}}
+async function checkTokenMint(){if(tokenMintBusy)return;tokenMintBusy=true;updateTokenMint();try{render(await api('/api/demo/token-mints/reconcile',{}));el('token-status').textContent=tokenMintStatus(currentTokenMint())}catch(e){el('token-status').textContent=translateData(e.message)}finally{tokenMintBusy=false;updateTokenMint()}}
+async function requestTokenMint(){const existing=currentTokenMint();if(existing&&!existing.retryable&&['preparing','submitted'].includes(existing.status))return checkTokenMint();if(tokenMintBusy)return;const recipient=el('token-recipient').value.trim();tokenMintBusy=true;tokenPollAttempts=0;updateTokenMint();try{el('token-status').textContent=t('正在签名并发送 Monad Testnet 交易…','Signing and sending the Monad Testnet transaction…');render(await api('/api/demo/token-mints',{recipient}));el('token-status').textContent=tokenMintStatus(currentTokenMint())}catch(e){el('token-status').textContent=translateData(e.message);try{render(await api('/api/demo/state?accountId='+encodeURIComponent(accountId)))}catch{}}finally{tokenMintBusy=false;updateTokenMint()}}
 const claim=profile=>action('/api/demo/claims',{profile},state=>{const item=state.claims.find(c=>c.nightKey==='disclosed-example-a');return item?t('四维 V','Four-factor V')+(item.scoringVersion||2)+t(' 已复算并发放 ',' recalculated; awarded ')+item.awardedPoints+t(' 沙盒积分',' sandbox points'):t('四维计分完成','Four-factor scoring complete')});const buy=productId=>action('/api/demo/orders',{productId},t('沙盒兑换成功','Sandbox redemption successful'));async function resetDemo(){try{el('status').textContent=t('重置中…','Resetting…');await api('/api/demo/reset',{});localStorage.removeItem('sleepDemoAccount');location.reload()}catch(e){el('status').textContent=translateData(e.message)}}refresh();
 </script></body></html>`, language);
 }
 
-export default {
+const application = {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
     const url = new URL(request.url);
     try {
+      if (request.method === "GET" && (url.pathname === "/app" || url.pathname === "/app/")) {
+        const language = requestLanguage(request);
+        return new Response(appPage(language), { headers: {
+          ...htmlHeaders,
+          "Content-Language": language === "en" ? "en" : "zh-CN",
+          "Set-Cookie": `momoLanguage=${language}; Path=/; Max-Age=31536000; SameSite=Lax`,
+        } });
+      }
+      if (request.method === "GET" && url.pathname === "/app/icon.svg") return new Response(appIcon, { headers: { "Content-Type": "image/svg+xml", ...securityHeaders } });
+      if (request.method === "GET" && url.pathname === "/app/manifest.webmanifest") return new Response(JSON.stringify(appManifest(requestLanguage(request))), { headers: { "Content-Type": "application/manifest+json", ...securityHeaders } });
       if (request.method === "GET" && url.pathname === "/") {
         const language = requestLanguage(request);
-        return new Response(page(language), { headers: {
+        return new Response(page(language).replace("</body>", '<script src="/momo-analytics.js" defer></script></body>'), { headers: {
           ...htmlHeaders,
           "Content-Language": language === "en" ? "en" : "zh-CN",
           "Set-Cookie": `momoLanguage=${language}; Path=/; Max-Age=31536000; SameSite=Lax`,
@@ -642,6 +635,13 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/demo/orders") return json(await createDemoOrder(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/cash-redemptions") return json(await createCashRedemptionApplication(env, await bodyFrom(request)), 201);
       if (request.method === "POST" && url.pathname === "/api/demo/token-mints") return json(await createTokenMint(env, await bodyFrom(request)), 201);
+      if (request.method === "POST" && url.pathname === "/api/demo/token-mints/reconcile") {
+        const payload = await bodyFrom(request);
+        await ensureAccount(env, payload.accountId);
+        await recoverSubmissions(env, monadClients);
+        await reconcileMints(env, monadClients, { accountId: payload.accountId, limit: 20, waitMs: 2_000 });
+        return json(await demoState(env, payload.accountId));
+      }
       if (request.method === "POST" && url.pathname === "/api/demo/reset") {
         const payload = await bodyFrom(request);
         return json(await resetDemo(env, payload.accountId));
@@ -660,9 +660,25 @@ export default {
       }
       return json({ error: "not found" }, 404);
     } catch (error) {
-      if (error instanceof HTTPError) return json({ error: error.message }, error.status);
+      if (error instanceof HTTPError || error instanceof MintHTTPError) return json({ error: error.message }, error.status);
       console.error("Unhandled server error", error);
       return json({ error: "服务器暂时不可用" }, 500);
     }
+  },
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    const monitoring = await monitorRoute(request, env);
+    if (monitoring) return monitoring;
+    const start = Date.now();
+    const response = await application.fetch(request, env);
+    if (ctx?.waitUntil && env.DB && env.MONITOR_SECRET) {
+      ctx.waitUntil(recordRequest(request, response, env, Date.now()-start).catch(() => console.error("Request telemetry write failed")));
+    }
+    return response;
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(Promise.allSettled([runChecks(env), recoverChainOperations(env)]));
   },
 };

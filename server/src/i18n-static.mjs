@@ -4,6 +4,8 @@ export const englishCopy = {
   "睡眠经济｜隐私证据网络": "Sleep Economy | Privacy-Preserving Evidence Network",
   "睡眠满八小时": "Eight Hours of Sleep",
   "你昨晚睡了几个小时？": "How many hours did you sleep last night?",
+  "体验 MOMO App": "Try the MOMO App",
+  "打开手机端应用": "Open the mobile app",
   "继续查看团队介绍": "Continue to meet the team",
   "认识 MOMO Sleep 团队 ↓": "Meet the MOMO Sleep team ↓",
   "Who we are · 团队介绍": "Who we are · Meet the team",

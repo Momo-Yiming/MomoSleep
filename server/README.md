@@ -50,10 +50,17 @@
 - 防重放：同一 claim commitment 只能铸造一次，同一收款地址只能参加一次。
 - 硬上限：合约最大供应量 20,000 SLEEP；公开服务最多接受 20 笔有效铸币。
 - 权限：只有合约 owner 可铸币。浏览器不接触私钥，Cloudflare 加密 secret 中的钱包负责支付测试网 gas。
-- 失败处理：数据库先占用承诺与地址，随后模拟调用、发送交易并等待回执；保存 `preparing/submitted/confirmed/failed` 状态和错误摘要。
+- 失败处理：`preparing` 检查网络、owner 和 gas；签名交易、哈希与 nonce 在广播前持久化。广播前失败为可重试的 `failed`；已签名但回执不明的 `submitted` 继续占用额度并恢复同一交易，不重新签名发币。`confirmed` 需成功回执与精确匹配的铸币事件；明确链上回滚为可重试的 `reverted`。旧无哈希的不明记录隔离为 `needs_review`。
+- 幂等与恢复：只有相同账户、凭证、收款地址的请求返回同一记录；跨账户使用已占用地址返回 409。`POST /api/demo/token-mints/reconcile` 仅恢复当前账户记录。Worker 每五分钟恢复待确认 mint/anchor；mint 与 anchor 共用 D1 nonce 预留和租约。自动恢复只重播已签名的 anchor，不自动签发新的管理员操作。私有已签交易账本不得公开导出。
 - 隐私：链上只有收款地址、积分数量和 32 字节加盐承诺，不包含姓名、心率、逐分钟阶段或精确睡眠时间。
 
 代币实现为最小 ERC-20 兼容合约，可在测试网地址间转账，但当前没有主网部署、交易所/DEX 上架、流动性池或价格承诺。所谓“连接加密市场”在本阶段只完成链上可转账资产和公开可验证交易；真正市场交易必须在选择目标司法辖区后另做证券、税务、制裁、消费者保护、隐私、经济模型与合约审计。
+
+## 双语 Web App 与兑换恢复
+
+官网保留项目介绍；`/app?lang=en` 与 `/app?lang=zh` 提供睡眠、积分、权益和记录入口，复用同一个匿名沙盒账户。`sampleSleep` 来自已披露样例，不读取访问者的 HealthKit。
+
+兑换的 `requestId` 在请求发出前保存。相同账户、商品和编号的重试返回原订单并只扣分一次；不确定时先读取订单，再恢复原请求。订单、余额和账本写入保持事务一致；旧客户端不传编号仍可使用。个人目标仅存当前浏览器，不改变样例得分。
 
 ## 本地运行
 
@@ -68,6 +75,8 @@ pnpm dev -- --local
 打开 <http://localhost:8787>。
 
 ## Cloudflare 部署
+
+两份 Wrangler 配置使用全零 `database_id` 占位。先创建自己的数据库，再填写返回的 ID。按顺序应用 `0001`–`0007`；Worker 与 Pages 绑定同一 D1，并分别配置所需 secrets。`0007` 会保守隔离历史不明铸币结果，不能通过删除记录绕过防重复。
 
 ```sh
 cd server
@@ -93,12 +102,14 @@ pnpm exec wrangler secret put ADMIN_TOKEN
 pnpm exec wrangler secret put MONAD_PRIVATE_KEY
 ```
 
+可选观测台还需要独立的 `MONITOR_PASSWORD` 与随机 `MONITOR_SECRET`；说明见 [观测台](../docs/OBSERVATORY.md)。Worker 配置包含每五分钟一次的健康检查与交易恢复 cron；Pages 入口自身不提供 cron，需保留共享同一 D1 的 Worker 调度。打包可用 `pnpm exec wrangler deploy --dry-run`，不会发布。
+
 ## Monad Testnet
 
 - Chain ID：`10143`
 - RPC：`https://testnet-rpc.monad.xyz`
 - 水龙头：<https://faucet.monad.xyz>
-- 测试网钱包私钥不在仓库中；当前 Mac 使用钥匙串 service `com.momomac.smart-sleep-economy.monad-testnet` 保管。
+- 测试网钱包私钥不在仓库中；仅通过部署平台加密 secret 或安全的本地环境提供。
 
 本地部署批次锚合约：
 
@@ -125,6 +136,8 @@ Authorization: Bearer <ADMIN_TOKEN>
 ```
 
 `prepare` 只选取尚未分批的沙盒凭证；`anchor` 成功后保存真实交易哈希和合约地址。
+
+复用已部署合约地址。查询和模拟调用不会创建交易；铸币与新批次锚定才是真实链上写入。沙盒计分、商城和人民币申请仍是数据库或流程模拟。SLEEP 按睡眠凭证的 `awarded_points` 映射，不随商城消费扣减，也不代表现金兑付。
 
 首个无真实健康数据批次 `batch-1788524456585-9c40aee5` 已完成锚定。合约、交易、Merkle Root 和 RPC 交叉核验结果见 [测试网部署记录](../docs/MONAD_TESTNET_DEPLOYMENT.md)。
 

@@ -1,0 +1,9 @@
+# MOMO Sleep Economy System
+
+MOMO is an RWA-oriented prototype connecting sleep participation, transparent scoring, and auditable rewards. Its proposed business model is opt-in, lower-cost evidence collection for sleep-product development and health research: buyers would pay for de-identified, aggregated data and analysis, with actual paid budgets supporting operations and participant rewards. No completed paid study, asset backing, cash payout, or buyer partnership is claimed.
+
+The native SwiftUI iPhone prototype requests HealthKit permission, reads sleep records and their source metadata, and prefers RingConn-source samples when present. RingConn Gen 2 is the user's personal hardware inspiration. The separate public website and `/app` use a disclosed, user-authorized screenshot sample; they do not read visitors' HealthKit records. Neither source attribution nor a blockchain record proves genuine sleep or hardware authenticity, and the prototype does not establish continuous real-time ring-to-chain ingestion.
+
+The experimental score considers duration, structure, continuity, and comparison with a target schedule. Its parameters are product incentives rather than medical standards. Public sandbox points and merchandise receipts have no real fulfillment. The renminbi payout workflow remains `integration_pending` and sends no payment.
+
+Monad Testnet hosts the deployed reward-token and batch-anchor contracts. The backend persists signed transactions, hashes, and nonces before broadcast and reconciles uncertain results against receipts and events. Raw sleep records, heart rate, identity, and exact sleep times stay off-chain; salted commitments and batch summaries support later audits. SLEEP test tokens have no promised mainnet value, liquidity, or return. A funded opt-in product study, meaningful consent, data validation, identity controls, and production security remain future work.
