@@ -42,6 +42,10 @@ RingConn Gen 2 → RingConn App → Apple Health
 
 Web App 1.1 加入显式刷新、随机虚构人物与夜晚、服务端计分及多晚记录；兑换中心包含商品、人民币试点申请与虚拟 SLEEP 兑换。随机数据不具备真实上链资格，人民币未接通打款，虚拟代币没有经济价值。该版本为浏览器 App 更新，原生 iOS App 单独验收。
 
+## Web App 1.2
+
+Web App 1.2 进一步加入随睡眠一起随机的年龄、具体职业与人物标记，以及戒指、手表、手环的绑定入口和前端接入事件。硬件暂未打通，入口明确保持“待接入 / 未连接”，不读取设备或健康数据。
+
 ## 目录
 
 - `SmartSleepAlarm/`、`SmartSleepAlarm.xcodeproj/`：iOS/macOS 客户端、HealthKit、AlarmKit、积分与凭证逻辑。

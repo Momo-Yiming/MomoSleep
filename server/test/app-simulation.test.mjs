@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import server from "../src/index.mjs";
 import { scoreSleep } from "../src/domain.mjs";
 import { sleepSimulation } from "../src/sleep-simulation.mjs";
+import { createHash } from "node:crypto";
 
 const uuid = number => `00000000-0000-4000-8000-${number.toString(16).padStart(12, "0")}`;
 function environment(t) {
@@ -43,6 +44,24 @@ const state = (env, accountId, simulationId) => request(env, `/api/demo/state?ac
 const claim = (env, accountId, simulationId, extras = {}) => request(env, "/api/demo/claims", { accountId, profile: "simulation", simulationId, ...extras });
 const exchange = (env, accountId, requestId, points = 100, extras = {}) => request(env, "/api/demo/token-exchanges", { accountId, requestId, points, ...extras });
 const count = (env, table) => env.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+
+test("random portraits vary by adult age and concrete occupation while preserving all existing nights", () => {
+  const records = Array.from({ length: 100 }, (_, i) => sleepSimulation(uuid(i + 1)));
+  const previousFields = records.map(r => ({ input: r.input, score: r.score, fingerprintData: r.fingerprintData, nightKey: r.nightKey, nightDate: r.summary.nightDate, windowLabel: r.summary.windowLabel, windowMinutes: r.summary.windowMinutes, person: { nameZh: r.summary.person.nameZh, nameEn: r.summary.person.nameEn, roleZh: r.summary.person.roleZh, roleEn: r.summary.person.roleEn } }));
+  assert.equal(createHash("sha256").update(JSON.stringify(previousFields)).digest("hex"), "f7278daef4a982bbe83989993f569d861977aaa62e7a27c2f12c18dcdcaba12d");
+  const portraits = records.map(r => r.summary.person);
+  assert.ok(new Set(portraits.map(p => p.age)).size > 20);
+  assert.equal(new Set(portraits.map(p => p.occupationEn)).size, 20);
+  assert.ok(new Set(portraits.map(p => `${p.nameEn}/${p.age}/${p.occupationEn}`)).size > 70);
+  for (const [i, person] of portraits.entries()) {
+    assert.deepEqual(sleepSimulation(uuid(i + 1).toUpperCase()).summary.person, person);
+    assert.ok(Number.isInteger(person.age) && person.age >= 18 && person.age <= 75);
+    assert.ok(Number.isInteger(person.avatarTone) && person.avatarTone >= 0 && person.avatarTone <= 4);
+    assert.ok(person.occupationZh && person.occupationEn);
+    if (person.occupationEn === "Retired teacher") assert.ok(person.age >= 60);
+    if (person.occupationEn === "Undergraduate student") assert.ok(person.age <= 25);
+  }
+});
 
 test("a UUID produces stable fictional people/nights and server-calculated bounded scores", () => {
   const records = Array.from({ length: 40 }, (_, i) => sleepSimulation(uuid(i + 1)));

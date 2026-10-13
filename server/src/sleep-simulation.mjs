@@ -8,6 +8,14 @@ const people = [
   { nameZh: "小宁", nameEn: "Ning", roleZh: "虚构晨型作息者", roleEn: "Fictional early riser", minutes: 470, bedtime: 21 * 60 },
 ];
 
+const occupations = [
+  [["软件工程师", "Software engineer", 22, 60], ["产品经理", "Product manager", 24, 60], ["会计", "Accountant", 22, 65], ["行政专员", "Office administrator", 20, 60]],
+  [["本科生", "Undergraduate student", 18, 25], ["研究生", "Graduate student", 22, 32], ["职业院校学生", "Vocational student", 18, 24], ["在职进修学生", "Part-time adult student", 25, 50]],
+  [["轮班护士", "Shift nurse", 23, 60], ["生产技术员", "Production technician", 22, 60], ["酒店值班员", "Hotel shift worker", 20, 58], ["运维工程师", "Operations engineer", 23, 55]],
+  [["独立设计师", "Independent designer", 22, 62], ["自由译者", "Freelance translator", 24, 65], ["自由撰稿人", "Freelance writer", 25, 70], ["摄影师", "Photographer", 22, 60]],
+  [["教师", "Teacher", 23, 64], ["烘焙师", "Baker", 22, 60], ["园林工作人员", "Park worker", 25, 65], ["退休教师", "Retired teacher", 60, 75]],
+];
+
 export function canonicalSimulationId(value) {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)) {
     throw new Error("simulationId must be a UUID");
@@ -25,6 +33,11 @@ export function sleepSimulation(value) {
     return minimum + seed % (maximum - minimum + 1);
   };
   const { minutes, bedtime, ...person } = people[personIndex];
+  // Enrich the portrait on a separate stream so existing nights and rewards never change.
+  let portraitSeed = 2166136261;
+  for (const char of `persona-v1:${simulationId}`) portraitSeed = Math.imul(portraitSeed ^ char.charCodeAt(0), 16777619) >>> 0;
+  const [occupationZh, occupationEn, minimumAge, maximumAge] = occupations[personIndex][portraitSeed % 4];
+  Object.assign(person, { occupationZh, occupationEn, age: minimumAge + (portraitSeed >>> 8) % (maximumAge - minimumAge + 1), avatarTone: (portraitSeed >>> 16) % 5 });
   // A fixed synthetic calendar keeps the same UUID stable across refreshes/days.
   const nightDate = new Date(Date.UTC(2026, 8, 1 + random(0, 42))).toISOString().slice(0, 10);
   const total = minutes + random(-70, 80);

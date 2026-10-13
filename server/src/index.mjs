@@ -16,7 +16,7 @@ import { canonicalSimulationId, sleepSimulation } from "./sleep-simulation.mjs";
 import { MintHTTPError, prepareSubmission, recoverSubmissions, settleSubmission, submissionFor } from "./chain-submission.mjs";
 import { processMint, reconcileMint, reconcileMints, reserveMint } from "./token-mint.mjs";
 
-const BUILD_ID = "1.5-app-simulations";
+const BUILD_ID = "1.6-app-personas";
 
 class HTTPError extends Error {
   constructor(status, message) {
